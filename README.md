@@ -11,7 +11,6 @@ A self-contained digital signage system for Raspberry Pi. One install script set
 - **Auto-advance** — server-side timing keeps the display in sync
 - **Video duration detection** — ffprobe sets display time automatically
 - **Background colour** — customisable per-playlist
-- **Auto-updates** — nightly systemd timer pulls the latest version from GitHub
 - **Version badge** — admin UI shows current version and alerts when an update is available
 
 ---
@@ -38,8 +37,6 @@ The script will:
 3. Install and enable two systemd services:
    - `pi-signage.service` — Flask media server (starts on boot)
    - `pi-signage-kiosk.service` — Chromium in kiosk mode (starts on graphical login)
-4. Install and enable a nightly update timer (`pi-signage-update.timer`)
-
 After install, open a browser on another device and go to:
 
 | Page | URL |
@@ -70,17 +67,7 @@ Navigate to `/admin` from any device on your network.
 
 ## Updates
 
-### Automatic
-A nightly systemd timer checks GitHub for a new version. If one is found, it re-runs the install script automatically. The admin UI will show an **Update Available** badge when a newer version is detected.
-
-### Manual
-SSH into the Pi and run:
-
-```bash
-sudo bash /opt/pi-signage/update.sh
-```
-
-Or to force a full reinstall:
+When the admin UI shows an **Update Available** badge, re-run the installer to update:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pelicanmedia/pelican-pi-signage/main/install.sh | sudo bash
@@ -97,8 +84,6 @@ journalctl -u pi-signage -f
 # Chromium kiosk
 journalctl -u pi-signage-kiosk -f
 
-# Auto-updater
-journalctl -u pi-signage-update -f
 ```
 
 ---
@@ -110,7 +95,6 @@ journalctl -u pi-signage-update -f
 ├── app.py              # Flask application
 ├── VERSION             # Installed version
 ├── install.conf        # Saved install user
-├── update.sh           # Auto-update script
 ├── signage.db          # SQLite database (playlist + settings)
 ├── templates/
 │   ├── index.html      # Player page
