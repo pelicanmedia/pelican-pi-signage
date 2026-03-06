@@ -1,0 +1,5 @@
+.drag-over { outline: 2px dashed #6366f1; background: #eef2ff; }
+.dragging  { opacity: 0.4; }
+.drag-handle { cursor: grab; }
+.drag-handle:active { cursor: grabbing; }
+.drop-zone-active { border-color: #6366f1 !important; background: #eef2ff; }

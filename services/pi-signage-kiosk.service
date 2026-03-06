@@ -1,0 +1,30 @@
+[Unit]
+Description=Pi Signage Chromium Kiosk
+# Wait for the graphical session and network to be ready
+After=graphical.target pi-signage.service
+Wants=graphical.target
+Requires=pi-signage.service
+
+[Service]
+Type=simple
+User=INSTALL_USER
+# X11 display (Raspberry Pi OS Bookworm uses X11 by default with LXDE/Openbox)
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/INSTALL_USER/.Xauthority
+# Give the graphical session a moment to settle
+ExecStartPre=/bin/sleep 5
+ExecStart=/bin/sh -c 'unclutter -idle 1 -root & exec /usr/bin/chromium \
+    --kiosk \
+    --noerrdialogs \
+    --disable-infobars \
+    --no-first-run \
+    --disable-session-crashed-bubble \
+    --disable-translate \
+    --check-for-update-interval=31536000 \
+    --autoplay-policy=no-user-gesture-required \
+    http://localhost:8080/'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical.target
