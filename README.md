@@ -61,8 +61,6 @@ Navigate to `/admin` from any device on your network.
 - **Playlist** — reorder items by dragging, toggle enabled/disabled, adjust duration
 - **Background colour** — set the player background for letterboxed content
 
-> **Note:** Sites like Google, YouTube, and most major platforms block iframe embedding. Use URLs from local apps, dashboards, or sites you control.
-
 ---
 
 ## Updates
