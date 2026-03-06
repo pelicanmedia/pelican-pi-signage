@@ -18,7 +18,7 @@ A self-contained digital signage system for Raspberry Pi. One install script set
 
 ## Requirements
 
-- Raspberry Pi running **Raspberry Pi OS Bookworm** (Debian 12)
+- Raspberry Pi running **Raspberry Pi OS Bookworm (or newer)**
 - Desktop environment (for the Chromium kiosk)
 - Internet connection (for install and auto-updates)
 
