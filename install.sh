@@ -11,8 +11,6 @@ set -euo pipefail
 APP_DIR="/opt/pi-signage"
 SERVICE_FLASK="pi-signage.service"
 SERVICE_KIOSK="pi-signage-kiosk.service"
-SERVICE_UPDATE="pi-signage-update.service"
-TIMER_UPDATE="pi-signage-update.timer"
 GITHUB_RAW="https://raw.githubusercontent.com/pelicanmedia/pelican-pi-signage/main"
 
 INSTALL_USER="${SUDO_USER:-}"
@@ -67,15 +65,12 @@ dl() { curl -fsSL "$GITHUB_RAW/$1" -o "$APP_DIR/$1"; }
 
 dl app.py
 dl VERSION
-dl update.sh
 dl templates/index.html
 dl templates/admin.html
 dl static/css/admin.css
 dl static/css/player.css
 dl static/js/admin.js
 dl static/js/player.js
-
-chmod 750 "$APP_DIR/update.sh"
 
 # ---------------------------------------------------------------------------
 # Save install config
@@ -103,8 +98,6 @@ install_service() {
 
 install_service "$SERVICE_FLASK"
 install_service "$SERVICE_KIOSK"
-install_service "$SERVICE_UPDATE"
-install_service "$TIMER_UPDATE"
 
 # ---------------------------------------------------------------------------
 # Enable and start services
@@ -113,8 +106,6 @@ echo "==> Enabling services…"
 systemctl daemon-reload
 systemctl enable "$SERVICE_FLASK"
 systemctl enable "$SERVICE_KIOSK"
-systemctl enable "$TIMER_UPDATE"
-systemctl start "$TIMER_UPDATE"
 
 echo "==> Starting Flask service…"
 systemctl restart "$SERVICE_FLASK"
@@ -134,9 +125,6 @@ echo " next graphical login / reboot."
 echo ""
 echo " To start kiosk now (from the desktop session):"
 echo "   sudo systemctl start pi-signage-kiosk.service"
-echo ""
-echo " Auto-updates: nightly via pi-signage-update.timer"
-echo " Update now  : sudo bash /opt/pi-signage/update.sh"
 echo ""
 echo " Logs:"
 echo "   journalctl -u pi-signage -f"
