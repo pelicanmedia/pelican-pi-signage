@@ -22,6 +22,8 @@ ExecStart=/bin/sh -c 'unclutter -idle 1 -root & exec /usr/bin/chromium \
     --disable-translate \
     --check-for-update-interval=31536000 \
     --autoplay-policy=no-user-gesture-required \
+    --disable-gpu-memory-buffer-video-frames \
+    --disable-features=MediaSessionService \
     http://localhost:8080/'
 Restart=on-failure
 RestartSec=10
