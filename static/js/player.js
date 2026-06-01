@@ -50,38 +50,47 @@ function buildLayer(asset) {
     }
 
     const frame = document.createElement("iframe");
-    frame.src = asset.src;
     frame.setAttribute("allowfullscreen", "");
     frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups");
 
-    // Fallback overlay shown if the site blocks iframe embedding
     const fallback = document.createElement("div");
     fallback.style.cssText = `
       display:none; position:absolute; inset:0; align-items:center;
       justify-content:center; flex-direction:column; gap:1rem;
       background:#111; color:#888; font-family:system-ui,sans-serif; text-align:center; padding:2rem;
     `;
-    fallback.innerHTML = `
-      <svg style="width:48px;height:48px;opacity:.4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-          d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
-      </svg>
-      <div style="font-size:1rem;font-weight:600;color:#aaa">${asset.name}</div>
-      <div style="font-size:.8rem">${asset.src}</div>
-      <div style="font-size:.75rem;color:#666">This site blocks iframe embedding (X-Frame-Options)</div>
-    `;
 
-    frame.addEventListener("load", () => {
-      try {
-        void frame.contentDocument.title;
-      } catch (_) {
-        // Cross-origin — browser will show its own error if X-Frame-Options blocked it.
-      }
-    });
-    frame.addEventListener("error", () => {
+    const showFallback = (message) => {
       frame.style.display = "none";
       fallback.style.display = "flex";
-    });
+      fallback.innerHTML = `
+        <svg style="width:48px;height:48px;opacity:.4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+        </svg>
+        <div style="font-size:1rem;font-weight:600;color:#aaa">${asset.name}</div>
+        <div style="font-size:.8rem">${asset.src}</div>
+        <div style="font-size:.75rem;color:#666">${message}</div>
+      `;
+    };
+
+    frame.addEventListener("error", () => showFallback("This site blocks iframe embedding (X-Frame-Options)"));
+
+    // Probe reachability before loading the iframe so a styled fallback is shown
+    // instead of the browser's own error page when the network is unavailable.
+    // mode:'no-cors' gives an opaque response for any reachable server (including
+    // CORS-restricted ones), and throws only on genuine network failure.
+    const controller = new AbortController();
+    const probeTimer = setTimeout(() => controller.abort(), 3000);
+    fetch(asset.src, { mode: "no-cors", signal: controller.signal })
+      .then(() => {
+        clearTimeout(probeTimer);
+        frame.src = asset.src;
+      })
+      .catch(() => {
+        clearTimeout(probeTimer);
+        showFallback("Could not reach this URL — check your internet connection");
+      });
 
     div.appendChild(frame);
     div.appendChild(fallback);
