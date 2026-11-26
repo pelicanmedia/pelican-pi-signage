@@ -1,5 +1,6 @@
 import os
 import time
+import datetime
 import json
 import sqlite3
 import secrets
@@ -9,6 +10,8 @@ from flask import (Flask, request, jsonify, render_template, redirect,
                    url_for, session)
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+
+from schedule import SCHEDULE_FIELDS, ScheduleError, is_active, normalize_schedule
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
@@ -46,8 +49,10 @@ app.config["SESSION_COOKIE_NAME"] = "pi_signage_session"
 
 MIN_PASSWORD_LENGTH = 8
 
-# Server-side playlist state (single display device assumption)
-_state = {"index": 0, "started_at": time.time()}
+# Server-side playlist state (single display device assumption).
+# The current item is tracked by id (not list index) so that scheduled items
+# appearing or disappearing don't make the display jump.
+_state = {"current_id": None, "sort_key": None, "started_at": time.time()}
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +102,11 @@ def init_db():
             )
         if not _column_exists(conn, "assets", "sync_uuid"):
             conn.execute("ALTER TABLE assets ADD COLUMN sync_uuid TEXT")
+
+        # Migration: per-asset scheduling (v1.3.0)
+        for col in SCHEDULE_FIELDS:
+            if not _column_exists(conn, "assets", col):
+                conn.execute(f"ALTER TABLE assets ADD COLUMN {col} TEXT")
 
         # Migration: add updated_at to settings
         if not _column_exists(conn, "settings", "updated_at"):
@@ -316,7 +326,12 @@ def api_playlist():
         rows = conn.execute(
             "SELECT * FROM assets ORDER BY position ASC, id ASC"
         ).fetchall()
-    return jsonify([dict(r) for r in rows])
+    out = []
+    for r in rows:
+        a = dict(r)
+        a["active_now"] = is_active(a)
+        out.append(a)
+    return jsonify(out)
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -400,11 +415,18 @@ def api_update_asset(asset_id):
         name     = data.get("name",     row["name"])
         duration = int(data.get("duration", row["duration"]))
         enabled  = int(data.get("enabled",  row["enabled"]))
+        try:
+            sched = normalize_schedule(data, dict(row))
+        except ScheduleError as e:
+            return jsonify({"error": str(e)}), 400
 
         conn.execute(
             "UPDATE assets SET name=?, duration=?, enabled=?,"
+            " start_date=?, end_date=?, play_days=?, play_time_from=?, play_time_to=?,"
             " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
-            (name, duration, enabled, asset_id),
+            (name, duration, enabled,
+             sched["start_date"], sched["end_date"], sched["play_days"],
+             sched["play_time_from"], sched["play_time_to"], asset_id),
         )
         conn.commit()
         asset = conn.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
@@ -452,8 +474,10 @@ def api_reorder():
     items = request.get_json(force=True) or []  # [{id, position}, ...]
     with get_db() as conn:
         for item in items:
+            # Bump updated_at so the new order wins last-write-wins sync
             conn.execute(
-                "UPDATE assets SET position=? WHERE id=?",
+                "UPDATE assets SET position=?,"
+                " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
                 (item["position"], item["id"]),
             )
         conn.commit()
@@ -549,6 +573,35 @@ def api_version():
 # API – player
 # ---------------------------------------------------------------------------
 
+def _active_assets():
+    """Enabled assets whose schedule allows them to play right now, in order."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM assets WHERE enabled=1 ORDER BY position ASC, id ASC"
+        ).fetchall()
+    now = datetime.datetime.now()
+    return [a for a in (dict(r) for r in rows) if is_active(a, now)]
+
+
+def _sort_key(asset):
+    return (asset["position"], asset["id"])
+
+
+def _next_after(assets, key):
+    """First asset ordered after `key`, wrapping round to the start."""
+    if key is not None:
+        for a in assets:
+            if _sort_key(a) > tuple(key):
+                return a
+    return assets[0]
+
+
+def _set_current(asset, now):
+    _state["current_id"] = asset["id"] if asset else None
+    _state["sort_key"]   = _sort_key(asset) if asset else None
+    _state["started_at"] = now
+
+
 @app.route("/api/advance", methods=["POST"])
 def api_advance():
     """Force the playlist to move to the next asset immediately.
@@ -557,49 +610,46 @@ def api_advance():
     """
     if not (_is_local_request() or session.get("logged_in")):
         return jsonify({"error": "Login required"}), 401
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id FROM assets WHERE enabled=1 ORDER BY position ASC, id ASC"
-        ).fetchall()
-    if rows:
-        _state["index"] = (_state["index"] + 1) % len(rows)
-        _state["started_at"] = time.time()
+    assets = _active_assets()
+    if assets:
+        _set_current(_next_after(assets, _state["sort_key"]), time.time())
     return jsonify({"success": True})
 
 
 @app.route("/api/next")
 def api_next():
+    assets = _active_assets()
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM assets WHERE enabled=1 ORDER BY position ASC, id ASC"
-        ).fetchall()
         bg_row = conn.execute(
             "SELECT value FROM settings WHERE key='bg_color'"
         ).fetchone()
-
-    assets = [dict(r) for r in rows]
     bg_color = bg_row["value"] if bg_row else "#000000"
 
     if not assets:
-        return jsonify({"bg_color": bg_color})
+        with get_db() as conn:
+            any_enabled = conn.execute(
+                "SELECT 1 FROM assets WHERE enabled=1 LIMIT 1"
+            ).fetchone()
+        message = ("Nothing is scheduled to show right now." if any_enabled
+                   else "No content enabled in playlist.")
+        return jsonify({"bg_color": bg_color, "idle_message": message})
 
     now = time.time()
+    current = next((a for a in assets if a["id"] == _state["current_id"]), None)
 
-    # Guard against out-of-range index after playlist edits
-    if _state["index"] >= len(assets):
-        _state["index"] = 0
-        _state["started_at"] = now
+    if current is None:
+        # Current item was removed, disabled or went out of schedule:
+        # carry on from where it was in the order.
+        current = _next_after(assets, _state["sort_key"]) if _state["sort_key"] else assets[0]
+        _set_current(current, now)
+    elif now - _state["started_at"] >= current["duration"]:
+        current = _next_after(assets, _sort_key(current))
+        _set_current(current, now)
+    else:
+        # Keep the stored order key fresh in case the item was reordered
+        _state["sort_key"] = _sort_key(current)
 
-    elapsed = now - _state["started_at"]
-    current = assets[_state["index"]]
-
-    if elapsed >= current["duration"]:
-        _state["index"] = (_state["index"] + 1) % len(assets)
-        _state["started_at"] = now
-        elapsed = 0.0
-        current = assets[_state["index"]]
-
-    remaining = current["duration"] - elapsed
+    remaining = current["duration"] - (now - _state["started_at"])
     return jsonify({**current, "bg_color": bg_color, "remaining": round(remaining, 2)})
 
 

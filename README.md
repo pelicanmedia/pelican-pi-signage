@@ -9,6 +9,7 @@ A self-contained digital signage system for Raspberry Pi. One install script set
 - **Drag-and-drop playlist** — images, videos, and web URLs
 - **Web-based admin UI** — manage content from any device on your network
 - **Auto-advance** — server-side timing keeps the display in sync
+- **Scheduling** — limit any item to a date range, days of the week and a time of day
 - **Video duration detection** — ffprobe sets display time automatically
 - **Background colour** — customisable per-playlist
 - **Version badge** — admin UI shows current version and alerts when an update is available
@@ -73,6 +74,26 @@ This clears the password (playlist and media are untouched) and the next visit t
 - **Add Web URL** — display any webpage that allows iframe embedding
 - **Playlist** — reorder items by dragging, toggle enabled/disabled, adjust duration
 - **Background colour** — set the player background for letterboxed content
+- **Schedule** — click the calendar icon on an item (see below)
+
+---
+
+## Scheduling
+
+Each playlist item can be limited to:
+
+| Setting | Example | Blank means |
+|---------|---------|-------------|
+| Start / end date | 1 Dec – 24 Dec | No date limit |
+| Days of the week | Mon–Fri | Every day |
+| Time of day | 09:00 until 17:00 | All day |
+
+- Dates are inclusive. The end time is exclusive: 09:00–17:00 stops at 17:00.
+- If the end time is earlier than the start time, the window runs past midnight. For example, **Fri 22:00 until 02:00** still plays at 01:00 on Saturday morning.
+- Scheduled items show their schedule under the name. A **Not showing now** badge appears when an item is enabled but outside its schedule.
+- If nothing is scheduled to show, the screen says "Nothing is scheduled to show right now."
+- Schedules use the **Pi's own clock and timezone**. The installer prints the timezone. To change it, run `sudo raspi-config` → Localisation Options → Timezone.
+- Schedules sync with the controller both ways (controller v1.1.0 or later).
 
 ---
 
@@ -130,6 +151,7 @@ journalctl -u pi-signage-kiosk -f
 ├── reset-password.sh   # Clears the admin password
 ├── .env                # Controller URL/API key, optional GitHub token (owner-only)
 ├── sync.py             # Controller sync thread
+├── schedule.py         # Playlist scheduling rules
 ├── VERSION             # Installed version
 ├── install.conf        # Saved install user
 ├── signage.db          # SQLite database (playlist, settings, sync config, admin password hash)

@@ -72,6 +72,7 @@ function renderPlaylist() {
           ${escHtml(asset.name)}
         </div>
         <div class="text-xs text-gray-400 truncate max-w-xs">${escHtml(asset.src)}</div>
+        ${scheduleLine(asset)}
       </td>
       <td class="px-4 py-3">${typeBadge(asset.type)}</td>
       <td class="px-4 py-3">
@@ -89,8 +90,16 @@ function renderPlaylist() {
                        ${asset.enabled ? "translate-x-6" : "translate-x-1"}"></span>
         </button>
       </td>
-      <td class="px-4 py-3 text-center">
-        <button class="delete-btn text-gray-400 hover:text-red-500 transition" data-id="${asset.id}">
+      <td class="px-4 py-3 text-center whitespace-nowrap">
+        <button class="schedule-btn text-gray-400 hover:text-indigo-600 transition mr-2" data-id="${asset.id}"
+                title="Schedule" aria-label="Schedule ${escHtml(asset.name)}">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+          </svg>
+        </button>
+        <button class="delete-btn text-gray-400 hover:text-red-500 transition" data-id="${asset.id}"
+                title="Delete" aria-label="Delete ${escHtml(asset.name)}">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0h10"/>
@@ -104,6 +113,18 @@ function renderPlaylist() {
 
   attachRowListeners();
   attachDragDrop();
+}
+
+function scheduleLine(asset) {
+  const summary = scheduleSummary(asset);
+  if (!summary) return "";
+  const notNow = asset.enabled && !asset.active_now
+    ? `<span class="ml-1.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">Not showing now</span>`
+    : "";
+  return `<div class="text-xs text-indigo-600 mt-0.5 flex items-center flex-wrap gap-y-1">
+    <svg class="w-3.5 h-3.5 mr-1 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+    </svg>${escHtml(summary)}${notNow}</div>`;
 }
 
 function escHtml(str) {
@@ -138,6 +159,18 @@ function attachRowListeners() {
     });
   });
 
+  document.querySelectorAll(".schedule-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const asset = playlist.find(a => a.id === +btn.dataset.id);
+      if (!asset) return;
+      openScheduleEditor(asset, async fields => {
+        await patchAsset(asset.id, fields);
+        await loadPlaylist();
+        toast("Schedule saved");
+      });
+    });
+  });
+
   document.querySelectorAll(".delete-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
       if (!confirm("Delete this item?")) return;
@@ -150,11 +183,16 @@ function attachRowListeners() {
 }
 
 async function patchAsset(id, data) {
-  await fetch(`/api/asset/${id}`, {
+  const res = await fetch(`/api/asset/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Save failed");
+  }
+  return res.json();
 }
 
 // -------------------------------------------------------------------------

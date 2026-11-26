@@ -65,6 +65,7 @@ dl() { curl -fsSL "$GITHUB_RAW/$1" -o "$APP_DIR/$1"; }
 
 dl app.py
 dl sync.py
+dl schedule.py
 dl VERSION
 dl templates/index.html
 dl templates/admin.html
@@ -76,6 +77,7 @@ dl static/css/admin.css
 dl static/css/player.css
 dl static/js/admin.js
 dl static/js/player.js
+dl static/js/schedule-ui.js
 
 # ---------------------------------------------------------------------------
 # Save install config
@@ -144,6 +146,10 @@ echo " Player     : http://$(hostname -I | awk '{print $1}'):8081/"
 echo " Admin UI   : http://$(hostname -I | awk '{print $1}'):8081/admin"
 echo "              (first visit asks you to set an admin password —"
 echo "               do this straight away so nobody else on the network can)"
+echo ""
+echo " Timezone   : $(timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone)"
+echo "              Playlist schedules use this. If it's wrong, fix it with:"
+echo "              sudo raspi-config  (Localisation Options > Timezone)"
 echo ""
 echo " The Chromium kiosk will launch automatically on"
 echo " next graphical login / reboot."

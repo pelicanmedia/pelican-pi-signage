@@ -13,6 +13,8 @@ import time
 import urllib.request
 import urllib.error
 
+from schedule import SCHEDULE_FIELDS
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH   = os.path.join(BASE_DIR, "signage.db")
 ENV_FILE  = os.path.join(BASE_DIR, ".env")
@@ -76,7 +78,9 @@ def build_sync_request():
     with _get_db() as conn:
         assets = conn.execute(
             "SELECT id, name, type, src, duration, enabled, position,"
-            " updated_at, sync_uuid FROM assets ORDER BY position ASC, id ASC"
+            " updated_at, sync_uuid, start_date, end_date, play_days,"
+            " play_time_from, play_time_to"
+            " FROM assets ORDER BY position ASC, id ASC"
         ).fetchall()
         settings = conn.execute(
             "SELECT key, value, updated_at FROM settings"
@@ -86,7 +90,7 @@ def build_sync_request():
     for a in assets:
         a = dict(a)
         local_only = a["sync_uuid"] is None or a["sync_uuid"].startswith("local:")
-        asset_list.append({
+        entry = {
             "sync_uuid":      a["sync_uuid"],
             "client_asset_id": a["id"],
             "name":           a["name"],
@@ -97,7 +101,10 @@ def build_sync_request():
             "position":       a["position"],
             "updated_at":     a["updated_at"] or "",
             "local_only":     local_only,
-        })
+        }
+        for f in SCHEDULE_FIELDS:
+            entry[f] = a[f]
+        asset_list.append(entry)
 
     settings_dict = {}
     for s in settings:
@@ -189,6 +196,11 @@ def apply_sync_response(response, cfg):
                         }
                         if src is not None:
                             updates["src"] = src
+                        # Only apply schedule fields the controller actually sent,
+                        # so an older controller can't wipe a schedule set here.
+                        for f in SCHEDULE_FIELDS:
+                            if f in a:
+                                updates[f] = a[f]
                         set_clause = ", ".join(f"{k}=?" for k in updates)
                         conn.execute(
                             f"UPDATE assets SET {set_clause} WHERE sync_uuid=?",
@@ -204,13 +216,15 @@ def apply_sync_response(response, cfg):
                     ).fetchone()[0]
                     conn.execute(
                         "INSERT INTO assets"
-                        " (name, type, src, duration, enabled, position, updated_at, sync_uuid)"
-                        " VALUES (?,?,?,?,?,?,?,?)",
+                        " (name, type, src, duration, enabled, position, updated_at, sync_uuid,"
+                        "  start_date, end_date, play_days, play_time_from, play_time_to)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             a["name"], a["type"], src,
                             a["duration"], a["enabled"],
                             a.get("position", max_pos + 1),
                             a["updated_at"], sync_uuid,
+                            *(a.get(f) for f in SCHEDULE_FIELDS),
                         ),
                     )
 

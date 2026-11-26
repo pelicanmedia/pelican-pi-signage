@@ -149,7 +149,7 @@ async function poll() {
       dying.addEventListener("transitionend", () => dying.remove(), { once: true });
     }
     currentId = null;
-    idleMsg.textContent = "No content enabled in playlist.";
+    idleMsg.textContent = (asset && asset.idle_message) || "No content enabled in playlist.";
     idle.style.display = "flex";
     pollTimer = setTimeout(poll, 5000);
     return;
