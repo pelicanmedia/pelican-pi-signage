@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Log in — Pi Signage</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center px-4">
+  <div class="bg-white rounded-xl shadow p-8 w-full max-w-sm">
+    <div class="flex items-center gap-3 mb-6">
+      <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+      </svg>
+      <h1 class="text-xl font-bold text-gray-800">Pi Signage</h1>
+    </div>
+
+    {% if error %}
+    <p class="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+      {{ error }}
+    </p>
+    {% endif %}
+
+    <form method="POST" class="space-y-4">
+      <div>
+        <label for="password" class="text-sm font-medium text-gray-700">Password</label>
+        <input id="password" type="password" name="password" autofocus required
+               autocomplete="current-password"
+               class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                      focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      </div>
+      <button type="submit"
+              class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2
+                     rounded-lg transition text-sm">
+        Log in
+      </button>
+    </form>
+    <p class="text-xs text-gray-400 mt-6">
+      Forgotten it? SSH into the Pi and run
+      <code class="bg-gray-100 px-1 rounded">sudo /opt/pi-signage/reset-password.sh</code>
+    </p>
+  </div>
+</body>
+</html>
