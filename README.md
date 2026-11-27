@@ -1,6 +1,6 @@
 # Pelican Pi Signage
 
-A self-contained digital signage system for Raspberry Pi. One install script sets up everything: a Flask media server, a Chromium kiosk, and optional sync with a central [controller](https://github.com/pelicanmedia/pelican-pi-signage-controller).
+A self-contained digital signage system for Raspberry Pi. One install script sets up everything: a Flask media server, a Chromium kiosk, and optional sync with a central controller.
 
 ---
 
@@ -23,7 +23,7 @@ A self-contained digital signage system for Raspberry Pi. One install script set
 - **Background colour** — customisable per-playlist
 - **Version badge** — admin UI shows current version and alerts when an update is available
 - **Password-protected admin** — the admin UI and its API require a login; the player page stays open for the kiosk
-- **Controller sync** *(optional)* — connect to a [Pelican Pi Signage Controller](https://github.com/pelicanmedia/pelican-pi-signage-controller) to manage multiple Pis centrally
+- **Controller sync** *(optional)* — connect to a Pelican Pi Signage Controller to manage multiple Pis centrally
 
 ---
 
@@ -188,7 +188,7 @@ Each playlist item can be limited to:
 
 ## Controller Sync *(optional)*
 
-A Pi can be connected to a [Pelican Pi Signage Controller](https://github.com/pelicanmedia/pelican-pi-signage-controller) for central management of multiple displays over a Hamachi VPN.
+A Pi can be connected to a Pelican Pi Signage Controller for central management of multiple displays over a Hamachi VPN.
 
 **To connect:**
 1. Register the Pi on the controller and copy the generated API key
