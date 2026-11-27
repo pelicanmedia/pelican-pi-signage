@@ -58,7 +58,7 @@ apt-get install -y wlr-randr v4l-utils \
 # ---------------------------------------------------------------------------
 # Create directory structure
 # ---------------------------------------------------------------------------
-echo "==> Creating application directory at $APP_DIR…"
+echo "==> Creating application directory at ${APP_DIR}…"
 mkdir -p "$APP_DIR/static/uploads"
 mkdir -p "$APP_DIR/static/css"
 mkdir -p "$APP_DIR/static/js/vendor"
