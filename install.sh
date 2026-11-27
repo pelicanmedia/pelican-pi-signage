@@ -99,6 +99,7 @@ dl static/js/content-ui.js
 dl static/js/device-ui.js
 dl static/js/vendor/hls.light.min.js
 dl static/js/vendor/hls.js-LICENSE.txt
+dl static/splash.png
 
 # ---------------------------------------------------------------------------
 # Save install config
@@ -275,6 +276,64 @@ if not done:
     out.append(f"cursor_theme = {theme}")
 open(path, "w").write("\n".join(out) + "\n")
 PYEOF
+fi
+
+# ---------------------------------------------------------------------------
+# Display: Pelican boot splash and desktop wallpaper
+# The boot splash replaces the image in Raspberry Pi OS's "pix" Plymouth
+# theme; the original is kept as splash.png.bk. Rebuilding the initramfs is
+# slow, so it only happens when the image has changed — updates re-run this
+# installer. The wallpaper is set in pcmanfm's config, so it works when the
+# installer runs over SSH or from a software update.
+# ---------------------------------------------------------------------------
+SPLASH_SRC="$APP_DIR/static/splash.png"
+PIX_DIR="/usr/share/plymouth/themes/pix"
+
+if [ -d "$PIX_DIR" ] && command -v plymouth-set-default-theme >/dev/null; then
+    if ! cmp -s "$SPLASH_SRC" "$PIX_DIR/splash.png"; then
+        echo "==> Setting the boot splash (rebuilding initramfs — this takes a minute)…"
+        if [ -f "$PIX_DIR/splash.png" ] && [ ! -f "$PIX_DIR/splash.png.bk" ]; then
+            cp "$PIX_DIR/splash.png" "$PIX_DIR/splash.png.bk"
+        fi
+        install -m 644 "$SPLASH_SRC" "$PIX_DIR/splash.png"
+        plymouth-set-default-theme --rebuild-initrd pix \
+            || echo "    WARNING: couldn't rebuild the initramfs — the boot splash may not change"
+    fi
+else
+    echo "    NOTE: Plymouth 'pix' theme not found — skipping the boot splash"
+fi
+
+echo "==> Setting the desktop wallpaper…"
+WALLPAPER="$USER_HOME/Pictures/splash.png"
+install -d -o "$INSTALL_USER" -g "$INSTALL_USER" "$USER_HOME/Pictures"
+install -m 644 -o "$INSTALL_USER" -g "$INSTALL_USER" "$SPLASH_SRC" "$WALLPAPER"
+
+PCMANFM_DIR="$USER_HOME/.config/pcmanfm/LXDE-pi"
+PCMANFM_CONF="$PCMANFM_DIR/desktop-items-0.conf"
+mkdir -p "$PCMANFM_DIR"
+if [ ! -f "$PCMANFM_CONF" ] && [ -f /etc/xdg/pcmanfm/LXDE-pi/desktop-items-0.conf ]; then
+    cp /etc/xdg/pcmanfm/LXDE-pi/desktop-items-0.conf "$PCMANFM_CONF"
+fi
+touch "$PCMANFM_CONF"
+if ! grep -q '^\[\*\]' "$PCMANFM_CONF"; then
+    { printf '[*]\n'; cat "$PCMANFM_CONF"; } > "$PCMANFM_CONF.tmp"
+    mv "$PCMANFM_CONF.tmp" "$PCMANFM_CONF"
+fi
+awk -v wp="$WALLPAPER" '
+    /^wallpaper(_mode)?=/ { next }
+    { print }
+    /^\[\*\]/ && !done { print "wallpaper_mode=center"; print "wallpaper=" wp; done = 1 }
+' "$PCMANFM_CONF" > "$PCMANFM_CONF.tmp"
+mv "$PCMANFM_CONF.tmp" "$PCMANFM_CONF"
+chown -R "$INSTALL_USER:$INSTALL_USER" "$USER_HOME/.config/pcmanfm"
+
+# If the desktop is running now, change the wallpaper straight away too
+if pgrep -u "$INSTALL_USER" -x pcmanfm >/dev/null; then
+    USER_UID="$(id -u "$INSTALL_USER")"
+    sudo -u "$INSTALL_USER" env DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 \
+        XDG_RUNTIME_DIR="/run/user/$USER_UID" \
+        timeout 10 pcmanfm --wallpaper-mode=center --set-wallpaper="$WALLPAPER" \
+        >/dev/null 2>&1 || true
 fi
 
 # ---------------------------------------------------------------------------

@@ -159,6 +159,8 @@ The kiosk starts Chromium full-screen on the player page after the desktop logs 
 
 The mouse pointer is hidden. On Wayland the installer gives the desktop (labwc or wayfire) an invisible pointer theme, `pi-signage-blank`, which takes effect after a reboot. This also hides the pointer in the desktop itself. To get it back, remove the `XCURSOR_THEME=` line from `~/.config/labwc/environment` (or the `cursor_theme` line from `~/.config/wayfire.ini`) and reboot. On X11, `unclutter` hides it. The player page also hides it and doesn't respond to clicks or touches, because it's meant for signage, not interactive screens.
 
+The installer also sets the Pelican boot splash and desktop wallpaper (`static/splash.png`). The boot splash replaces the image in Raspberry Pi OS's `pix` Plymouth theme. The original is kept as `/usr/share/plymouth/themes/pix/splash.png.bk`, and the initramfs is only rebuilt when the image changes. The wallpaper is copied to `~/Pictures/splash.png` and set, centred, in `~/.config/pcmanfm/LXDE-pi/desktop-items-0.conf`.
+
 To pass extra flags to Chromium, for example while tuning a particular display, add them to `/opt/pi-signage/.env`, then restart the kiosk with `sudo systemctl restart pi-signage-kiosk`:
 
 ```
