@@ -6,9 +6,29 @@ let currentId    = null;
 let currentLayer = null;
 let pollTimer    = null;
 let forceNext    = false;
+let preloaded    = null;   // { id, src, layer } built ahead of time for the next item
 
-// Build a DOM layer for the given asset
-function buildLayer(asset) {
+const PRELOAD_SECONDS = 8;  // start loading the next item this long before it's due
+
+function makeVideo(src, deferPlay) {
+  const vid = document.createElement("video");
+  vid.src         = src;
+  vid.preload     = "auto";
+  vid.autoplay    = !deferPlay;
+  vid.muted       = true;   // required for autoplay in Chromium
+  vid.playsInline = true;
+  vid.controls    = false;
+  vid.addEventListener("ended", async () => {
+    forceNext = true;
+    await fetch("/api/advance", { method: "POST" });
+    poll();
+  });
+  return vid;
+}
+
+// Build a DOM layer for the given asset. With deferPlay, videos load but
+// don't start until the layer is shown.
+function buildLayer(asset, deferPlay = false) {
   const div = document.createElement("div");
   div.className = "layer";
 
@@ -18,34 +38,12 @@ function buildLayer(asset) {
     div.appendChild(img);
 
   } else if (asset.type === "video") {
-    const vid = document.createElement("video");
-    vid.src         = asset.src;
-    vid.autoplay    = true;
-    vid.muted       = true;   // required for autoplay in Chromium
-    vid.playsInline = true;
-    vid.controls    = false;
-    vid.addEventListener("ended", async () => {
-      forceNext = true;
-      await fetch("/api/advance", { method: "POST" });
-      poll();
-    });
-    div.appendChild(vid);
+    div.appendChild(makeVideo(asset.src, deferPlay));
 
   } else if (asset.type === "url") {
     // Treat direct video file URLs as a video element
     if (/\.(mp4|webm|mov|avi|m3u8)(\?.*)?$/i.test(asset.src)) {
-      const vid = document.createElement("video");
-      vid.src         = asset.src;
-      vid.autoplay    = true;
-      vid.muted       = true;
-      vid.playsInline = true;
-      vid.controls    = false;
-      vid.addEventListener("ended", async () => {
-        forceNext = true;
-        await fetch("/api/advance", { method: "POST" });
-        poll();
-      });
-      div.appendChild(vid);
+      div.appendChild(makeVideo(asset.src, deferPlay));
       return div;
     }
 
@@ -103,7 +101,15 @@ function buildLayer(asset) {
 function showAsset(asset) {
   const prev = currentLayer;
 
-  const next = buildLayer(asset);
+  let next;
+  if (preloaded && preloaded.id === asset.id && preloaded.src === asset.src) {
+    next = preloaded.layer;          // already buffered
+    const vid = next.querySelector("video");
+    if (vid) { vid.currentTime = 0; vid.play().catch(() => {}); }
+  } else {
+    next = buildLayer(asset);
+  }
+  preloaded = null;
   stage.appendChild(next);
 
   // Trigger reflow so the transition fires
@@ -118,6 +124,21 @@ function showAsset(asset) {
   currentLayer = next;
   currentId    = asset.id;
   idle.style.display = "none";
+}
+
+// Build the next video/image off-screen so it starts without a gap.
+// Web pages aren't preloaded (they'd run scripts and probe the network early).
+function maybePreload(asset) {
+  const up = asset.upcoming;
+  if (!up || up.id === asset.id || asset.remaining > PRELOAD_SECONDS) return;
+  if (preloaded && preloaded.id === up.id && preloaded.src === up.src) return;
+
+  const isVideoUrl = up.type === "url" && /\.(mp4|webm|mov)(\?.*)?$/i.test(up.src);
+  if (up.type === "video" || isVideoUrl) {
+    preloaded = { id: up.id, src: up.src, layer: buildLayer(up, true) };
+  } else if (up.type === "image") {
+    preloaded = { id: up.id, src: up.src, layer: buildLayer(up) };
+  }
 }
 
 // Poll /api/next and schedule the next poll based on remaining time
@@ -159,6 +180,8 @@ async function poll() {
     forceNext = false;
     showAsset(asset);
   }
+
+  maybePreload(asset);
 
   // Schedule next poll slightly before the server will advance (min 1 s, max 5 s so
   // disabled assets are detected quickly even during long videos)

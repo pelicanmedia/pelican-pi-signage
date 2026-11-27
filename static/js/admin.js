@@ -38,10 +38,18 @@ function typeBadge(type) {
 // -------------------------------------------------------------------------
 let playlist = [];
 
+let processingTimer = null;
+
 async function loadPlaylist() {
   const data = await fetch("/api/playlist").then(r => r.json());
   playlist = data;
   renderPlaylist();
+
+  // While videos are converting, refresh so their status updates
+  clearTimeout(processingTimer);
+  if (playlist.some(a => a.media_status === "processing")) {
+    processingTimer = setTimeout(loadPlaylist, 5000);
+  }
 }
 
 function renderPlaylist() {
@@ -73,6 +81,7 @@ function renderPlaylist() {
         </div>
         <div class="text-xs text-gray-400 truncate max-w-xs">${escHtml(asset.src)}</div>
         ${scheduleLine(asset)}
+        ${mediaLine(asset)}
       </td>
       <td class="px-4 py-3">${typeBadge(asset.type)}</td>
       <td class="px-4 py-3">
@@ -113,6 +122,19 @@ function renderPlaylist() {
 
   attachRowListeners();
   attachDragDrop();
+}
+
+function mediaLine(asset) {
+  if (asset.media_status === "processing") {
+    return `<div class="text-xs mt-1"><span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">
+      <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity=".25"/><path d="M22 12a10 10 0 00-10-10" stroke="currentColor" stroke-width="3"/></svg>
+      Converting for smooth playback… (not shown until done)</span></div>`;
+  }
+  if (asset.media_status === "failed") {
+    return `<div class="text-xs mt-1"><span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium"
+      title="${escHtml(asset.media_error || "")}">Conversion failed — this video won't play. Try re-exporting it as H.264 MP4.</span></div>`;
+  }
+  return "";
 }
 
 function scheduleLine(asset) {

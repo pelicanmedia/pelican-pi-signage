@@ -11,6 +11,9 @@ A self-contained digital signage system for Raspberry Pi. One install script set
 - **Auto-advance** — server-side timing keeps the display in sync
 - **Scheduling** — limit any item to a date range, days of the week and a time of day
 - **Video duration detection** — ffprobe sets display time automatically
+- **Automatic video conversion** — videos the Pi can't play smoothly (AVI, MKV, HEVC, 10-bit, 4K…) are converted to H.264 1080p after upload
+- **Gapless playback** — the next video or image is preloaded a few seconds before it's due
+- **Wayland and X11** — the kiosk works with Raspberry Pi OS's Wayland desktop (Pi 4/5) and X11
 - **Background colour** — customisable per-playlist
 - **Version badge** — admin UI shows current version and alerts when an update is available
 - **Password-protected admin** — the admin UI and its API require a login; the player page stays open for the kiosk
@@ -21,7 +24,7 @@ A self-contained digital signage system for Raspberry Pi. One install script set
 ## Requirements
 
 - Raspberry Pi running **Raspberry Pi OS Bookworm (or newer)**
-- Desktop environment (for the Chromium kiosk)
+- Desktop environment with **auto-login** (for the Chromium kiosk) — Wayland (labwc/wayfire) or X11
 - Internet connection (for install and auto-updates)
 
 ---
@@ -70,11 +73,39 @@ sudo /opt/pi-signage/reset-password.sh
 
 This clears the password (playlist and media are untouched) and the next visit to `/admin` shows the setup page again.
 
-- **Upload Media** — drag and drop images or videos (JPG, PNG, GIF, WebP, MP4, WebM, MOV)
+- **Upload Media** — drag and drop images or videos (JPG, PNG, GIF, WebP, MP4, WebM, MOV, MKV, AVI)
 - **Add Web URL** — display any webpage that allows iframe embedding
 - **Playlist** — reorder items by dragging, toggle enabled/disabled, adjust duration
 - **Background colour** — set the player background for letterboxed content
 - **Schedule** — click the calendar icon on an item (see below)
+
+---
+
+## Video
+
+**Best results:** upload **H.264 MP4 at 1080p or below**. These play straight away with no conversion.
+
+Anything else the Pi can't play smoothly is converted automatically after upload. That includes AVI, MKV, HEVC/H.265, ProRes, 10-bit video, and anything larger than 1080p.
+
+- While converting, the item shows **Converting…** in the playlist and isn't played. It joins the rotation once it's ready.
+- Conversion runs in the background at low priority, so the current playlist keeps playing.
+- **It's slow on a Pi.** Expect anywhere from a little faster than real time to several times longer than the video, depending on the model and the source. For long videos, convert to H.264 MP4 on a computer first.
+- Videos sent from the controller are converted the same way.
+- If a file can't be converted, the item shows **Conversion failed**. Re-export it as H.264 MP4 and upload it again.
+
+---
+
+## Kiosk display
+
+The kiosk starts Chromium full-screen on the player page after the desktop logs in. It detects whether the desktop is **Wayland** (default on Pi 4/5 with Bookworm) or **X11**, and the installer turns off screen blanking.
+
+To pass extra flags to Chromium, for example while tuning a particular display, add them to `/opt/pi-signage/.env`, then restart the kiosk with `sudo systemctl restart pi-signage-kiosk`:
+
+```
+CHROMIUM_EXTRA_FLAGS=--force-device-scale-factor=1
+```
+
+To check video decoding on the Pi, open `chrome://media-internals` in a normal Chromium window while a video plays.
 
 ---
 
@@ -149,9 +180,11 @@ journalctl -u pi-signage-kiosk -f
 /opt/pi-signage/
 ├── app.py              # Flask application
 ├── reset-password.sh   # Clears the admin password
-├── .env                # Controller URL/API key, optional GitHub token (owner-only)
+├── .env                # Controller URL/API key, optional GitHub token and Chromium flags (owner-only)
 ├── sync.py             # Controller sync thread
 ├── schedule.py         # Playlist scheduling rules
+├── media.py            # Video checking and background conversion
+├── kiosk.sh            # Chromium kiosk launcher (Wayland/X11)
 ├── VERSION             # Installed version
 ├── install.conf        # Saved install user
 ├── signage.db          # SQLite database (playlist, settings, sync config, admin password hash)

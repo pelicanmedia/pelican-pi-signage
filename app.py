@@ -4,7 +4,6 @@ import datetime
 import json
 import sqlite3
 import secrets
-import subprocess
 from functools import wraps
 from flask import (Flask, request, jsonify, render_template, redirect,
                    url_for, session)
@@ -12,6 +11,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from schedule import SCHEDULE_FIELDS, ScheduleError, is_active, normalize_schedule
+import media
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
@@ -35,10 +35,11 @@ def read_env():
 
 ALLOWED_EXTENSIONS = {
     "png", "jpg", "jpeg", "gif", "webp", "bmp",
-    "mp4", "webm", "mov", "avi"
+    "mp4", "webm", "mov", "avi", "mkv", "m4v"
 }
 
-VIDEO_EXTENSIONS = {"mp4", "webm", "mov", "avi"}
+# Anything Chromium can't play well is converted to H.264 MP4 after upload (media.py)
+VIDEO_EXTENSIONS = {"mp4", "webm", "mov", "avi", "mkv", "m4v"}
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
@@ -108,6 +109,11 @@ def init_db():
             if not _column_exists(conn, "assets", col):
                 conn.execute(f"ALTER TABLE assets ADD COLUMN {col} TEXT")
 
+        # Migration: video conversion status (v1.4.0)
+        for col in ("media_status", "media_error"):
+            if not _column_exists(conn, "assets", col):
+                conn.execute(f"ALTER TABLE assets ADD COLUMN {col} TEXT")
+
         # Migration: add updated_at to settings
         if not _column_exists(conn, "settings", "updated_at"):
             conn.execute("ALTER TABLE settings ADD COLUMN updated_at TEXT")
@@ -151,6 +157,9 @@ def init_db():
 
         conn.commit()
 
+    # Restart any video conversions interrupted by a restart
+    media.resume_pending()
+
     # Start sync thread if configured
     from sync import maybe_start_sync_thread
     maybe_start_sync_thread()
@@ -163,19 +172,6 @@ def allowed_file(filename):
 def next_position(conn):
     row = conn.execute("SELECT COALESCE(MAX(position), -1) FROM assets").fetchone()
     return row[0] + 1
-
-
-def probe_video_duration(filepath):
-    """Return video duration in whole seconds via ffprobe, or None if unavailable."""
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", filepath],
-            capture_output=True, text=True, timeout=15,
-        )
-        data = json.loads(result.stdout)
-        return max(1, round(float(data["format"]["duration"])))
-    except Exception:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -361,10 +357,7 @@ def api_upload():
     src = f"/static/uploads/{filename}"
     name = request.form.get("name", "").strip() or base
 
-    if asset_type == "video":
-        duration = probe_video_duration(dest) or int(request.form.get("duration", 10))
-    else:
-        duration = int(request.form.get("duration", 10))
+    duration = int(request.form.get("duration", 10))
 
     with get_db() as conn:
         pos = next_position(conn)
@@ -374,8 +367,14 @@ def api_upload():
             (name, asset_type, src, duration, pos),
         )
         conn.commit()
-        asset = conn.execute("SELECT * FROM assets WHERE id=?", (cur.lastrowid,)).fetchone()
+        asset_id = cur.lastrowid
 
+    if asset_type == "video":
+        # Sets the real duration; queues conversion if Chromium can't play it well
+        media.prepare_video(asset_id, dest)
+
+    with get_db() as conn:
+        asset = conn.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
     return jsonify(dict(asset)), 201
 
 
@@ -577,7 +576,8 @@ def _active_assets():
     """Enabled assets whose schedule allows them to play right now, in order."""
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM assets WHERE enabled=1 ORDER BY position ASC, id ASC"
+            "SELECT * FROM assets WHERE enabled=1 AND media_status IS NULL"
+            " ORDER BY position ASC, id ASC"
         ).fetchall()
     now = datetime.datetime.now()
     return [a for a in (dict(r) for r in rows) if is_active(a, now)]
@@ -650,7 +650,15 @@ def api_next():
         _state["sort_key"] = _sort_key(current)
 
     remaining = current["duration"] - (now - _state["started_at"])
-    return jsonify({**current, "bg_color": bg_color, "remaining": round(remaining, 2)})
+
+    # Tell the player what's coming next so it can preload videos/images
+    upcoming = None
+    if len(assets) > 1:
+        nxt = _next_after(assets, _sort_key(current))
+        upcoming = {"id": nxt["id"], "type": nxt["type"], "src": nxt["src"]}
+
+    return jsonify({**current, "bg_color": bg_color, "remaining": round(remaining, 2),
+                    "upcoming": upcoming})
 
 
 # ---------------------------------------------------------------------------

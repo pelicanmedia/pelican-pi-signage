@@ -194,7 +194,9 @@ def apply_sync_response(response, cfg):
                             "position":   a["position"],
                             "updated_at": a["updated_at"],
                         }
-                        if src is not None:
+                        # Controller sends src "" for uploaded files (the file lives
+                        # only on the Pi), so never overwrite a real local path with it.
+                        if src:
                             updates["src"] = src
                         # Only apply schedule fields the controller actually sent,
                         # so an older controller can't wipe a schedule set here.
@@ -308,6 +310,17 @@ def _update_asset_src(sync_uuid, src):
             conn.commit()
 
 
+def _prepare_if_video(sync_uuid, filepath):
+    """Convert controller-sent videos the same way as local uploads."""
+    with _get_db() as conn:
+        row = conn.execute(
+            "SELECT id, type FROM assets WHERE sync_uuid=?", (sync_uuid,)
+        ).fetchone()
+    if row and row["type"] == "video":
+        import media
+        media.prepare_video(row["id"], filepath)
+
+
 def _send_ack(controller_url, api_key, tokens):
     if not tokens:
         return
@@ -360,9 +373,10 @@ def _do_sync(cfg):
     acked_tokens = []
     for token, original_name, sync_uuid in pending_downloads:
         try:
-            src, _ = _download_staged_file(controller_url, api_key, token, original_name)
+            src, filename = _download_staged_file(controller_url, api_key, token, original_name)
             _update_asset_src(sync_uuid, src)
             acked_tokens.append(token)
+            _prepare_if_video(sync_uuid, os.path.join(UPLOAD_FOLDER, filename))
         except Exception as exc:
             # Log but keep going; file will be retried on next sync
             _record_error(f"Download failed for {token}: {exc}")

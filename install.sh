@@ -66,6 +66,8 @@ dl() { curl -fsSL "$GITHUB_RAW/$1" -o "$APP_DIR/$1"; }
 dl app.py
 dl sync.py
 dl schedule.py
+dl media.py
+dl kiosk.sh
 dl VERSION
 dl templates/index.html
 dl templates/admin.html
@@ -96,6 +98,9 @@ CONTROLLER_API_KEY=
 
 # Optional: GitHub token for update checks (not needed — the repo is public)
 GITHUB_TOKEN=
+
+# Optional: extra Chromium flags for the kiosk, space-separated
+CHROMIUM_EXTRA_FLAGS=
 EOF
 fi
 
@@ -107,6 +112,14 @@ chmod -R 755 "$APP_DIR"
 # .env holds API keys/tokens and the DB holds the password hash — owner-only
 chmod 600 "$APP_DIR/.env"
 [ -f "$APP_DIR/signage.db" ] && chmod 600 "$APP_DIR/signage.db"
+
+# ---------------------------------------------------------------------------
+# Display: stop the screen blanking (Wayland and X11)
+# ---------------------------------------------------------------------------
+if command -v raspi-config >/dev/null; then
+    echo "==> Disabling screen blanking…"
+    raspi-config nonint do_blanking 1 || true
+fi
 
 # ---------------------------------------------------------------------------
 # Install systemd services
