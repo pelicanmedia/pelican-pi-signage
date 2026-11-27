@@ -157,6 +157,8 @@ Set **On at** and **Off at** times and the days the screen should be on (it stay
 
 The kiosk starts Chromium full-screen on the player page after the desktop logs in. It detects whether the desktop is **Wayland** (default on Pi 4/5 with Bookworm) or **X11**, and the installer turns off screen blanking.
 
+The mouse pointer is hidden on the player page itself, so it works on both Wayland and X11. The page doesn't respond to clicks or touches; it's meant for signage, not interactive screens.
+
 To pass extra flags to Chromium, for example while tuning a particular display, add them to `/opt/pi-signage/.env`, then restart the kiosk with `sudo systemctl restart pi-signage-kiosk`:
 
 ```

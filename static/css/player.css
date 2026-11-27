@@ -4,6 +4,18 @@ html, body {
   width: 100%; height: 100%;
   background: #000;
   overflow: hidden;
+  cursor: none;   /* no mouse pointer on the display (works on Wayland and X11) */
+}
+
+/* Invisible layer over everything. Web pages in frames set their own pointer,
+   so this sits on top to keep it hidden there too. It also stops clicks
+   reaching the content, which a signage screen doesn't need. */
+#shield {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  cursor: none;
+  background: transparent;
 }
 
 #stage {

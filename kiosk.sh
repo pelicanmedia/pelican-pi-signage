@@ -85,6 +85,7 @@ FLAGS=(
 
 if [ "$SESSION" = "wayland" ]; then
     FLAGS+=(--ozone-platform=wayland --enable-features=UseOzonePlatform)
+    # The mouse pointer is hidden by the player page itself (unclutter is X11-only)
 else
     FLAGS+=(--ozone-platform=x11)
     # Stop the screen blanking and hide the idle mouse pointer
