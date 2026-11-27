@@ -656,6 +656,16 @@ VERSION_CACHE_SECONDS = 3600
 _version_cache = {"latest": None, "checked_at": 0.0}
 
 
+def _is_newer(latest, installed):
+    """True if version string latest > installed ('1.10.0' > '1.9.2')."""
+    def parts(v):
+        return tuple(int(p) for p in v.split("."))
+    try:
+        return parts(latest) > parts(installed)
+    except (AttributeError, ValueError):
+        return False
+
+
 @app.route("/api/version")
 @login_required
 def api_version():
@@ -698,7 +708,8 @@ def api_version():
     return jsonify({
         "installed": installed,
         "latest": latest,
-        "update_available": bool(latest and latest != installed),
+        "update_available": _is_newer(latest, installed),
+        "updating": device.update_state() == "activating",
     })
 
 

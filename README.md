@@ -21,7 +21,7 @@ A self-contained digital signage system for Raspberry Pi. One install script set
 - **Device controls** — health (temperature, power, disk, memory), reboot / shut down / restart display, now showing with skip back and forward
 - **Screen schedule** — turn the screen (and optionally the TV, via HDMI-CEC) off outside opening hours
 - **Background colour** — customisable per-playlist
-- **Version badge** — admin UI shows current version and alerts when an update is available
+- **One-click updates** — the admin UI shows the current version and an **Update** button when a new release is out; a connected controller can update Pis too
 - **Password-protected admin** — the admin UI and its API require a login; the player page stays open for the kiosk
 - **Controller sync** *(optional)* — connect to a Pelican Pi Signage Controller to manage multiple Pis centrally
 
@@ -145,7 +145,7 @@ The **Device** section shows the Pi's health: temperature, uptime, memory, disk 
 - **Reboot** restarts the Pi (about a minute).
 - **Shut down** turns the Pi off. It won't come back on until someone unplugs and replugs the power, so it's only on the Pi's own admin page, not the controller.
 
-The installer adds `/etc/sudoers.d/pi-signage`, which lets the media server run exactly these three commands (`systemctl reboot`, `systemctl poweroff`, `systemctl restart pi-signage-kiosk.service`) and nothing else.
+The installer adds `/etc/sudoers.d/pi-signage`, which lets the media server run exactly these four commands (`systemctl reboot`, `systemctl poweroff`, `systemctl restart pi-signage-kiosk.service`, `systemctl start --no-block pi-signage-update.service`) and nothing else.
 
 ### Screen schedule
 
@@ -214,7 +214,15 @@ To disconnect a Pi from the controller, use the Disconnect button on the control
 
 ## Updates
 
-When the admin UI shows an **Update Available** badge, re-run the installer to update:
+When a new version is out, the admin UI shows an **Update to vX.Y.Z** button. Click it and the Pi downloads and runs the installer itself. This takes a few minutes, the screen goes blank briefly while the software restarts, and the page reloads when it's done. If the Pi is connected to a controller, it can be updated from there too.
+
+The update runs as the `pi-signage-update` systemd service. To follow it or see why one failed:
+
+```bash
+journalctl -u pi-signage-update -f
+```
+
+To update by hand, or to update a Pi older than v1.7.0 (which has no update button yet), re-run the installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pelicanmedia/pelican-pi-signage/main/install.sh | sudo bash
@@ -230,6 +238,9 @@ journalctl -u pi-signage -f
 
 # Chromium kiosk
 journalctl -u pi-signage-kiosk -f
+
+# Software updates
+journalctl -u pi-signage-update -f
 ```
 
 ---
@@ -248,7 +259,7 @@ journalctl -u pi-signage-kiosk -f
 ├── youtube.py          # YouTube downloads via yt-dlp
 ├── bin/                # yt-dlp and Deno
 ├── kiosk.sh            # Chromium kiosk launcher (Wayland/X11)
-├── device.py           # Health info, reboot/shutdown, screen schedule
+├── device.py           # Health info, reboot/shutdown/update, screen schedule
 ├── display.sh          # Turns the screen on/off (wlr-randr, DPMS, HDMI-CEC)
 ├── VERSION             # Installed version
 ├── install.conf        # Saved install user

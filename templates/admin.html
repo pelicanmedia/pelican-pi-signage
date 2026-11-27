@@ -42,11 +42,11 @@
         </div>
         <div class="flex items-center gap-2">
           <span id="versionInfo" class="text-xs text-white/50"></span>
-          <span id="updateBadge"
-                class="hidden bg-yellow-400 text-yellow-900 text-xs font-semibold px-2 py-1 rounded"
-                title="Update available — SSH in and run: curl -fsSL https://raw.githubusercontent.com/pelicanmedia/pelican-pi-signage/main/install.sh | sudo bash">
+          <button id="updateBadge" type="button"
+                class="hidden bg-yellow-400 hover:bg-yellow-300 disabled:opacity-80 disabled:cursor-default text-yellow-900 text-xs font-semibold px-2 py-1 rounded"
+                title="Download and install the latest version">
             Update Available
-          </span>
+          </button>
         </div>
         <a href="/" target="_blank"
            class="text-sm bg-white/20 hover:bg-white/30 transition px-3 py-1.5 rounded-lg font-medium">

@@ -2,8 +2,8 @@
 Device health and controls for Pelican Pi Signage.
 
 - system_info()      uptime, temperature, memory, disk, IPs, kiosk state, warnings
-- run_action(name)   reboot / shutdown / restart-kiosk (via the sudoers rule the
-                     installer adds in /etc/sudoers.d/pi-signage)
+- run_action(name)   reboot / shutdown / restart-kiosk / update (via the sudoers
+                     rule the installer adds in /etc/sudoers.d/pi-signage)
 - screen schedule    a background loop turns the screen off and on at the times
                      set in settings (display_on / display_off / display_days),
                      using display.sh (Wayland, X11 and optional HDMI-CEC)
@@ -27,6 +27,7 @@ DB_PATH  = os.path.join(BASE_DIR, "signage.db")
 DISPLAY_SCRIPT = os.path.join(BASE_DIR, "display.sh")
 
 KIOSK_SERVICE = "pi-signage-kiosk.service"
+UPDATE_SERVICE = "pi-signage-update.service"  # runs the installer as root
 SYSTEMCTL     = "/usr/bin/systemctl"
 
 # Commands allowed without a password by /etc/sudoers.d/pi-signage
@@ -34,8 +35,10 @@ ACTIONS = {
     "reboot":        [SYSTEMCTL, "reboot"],
     "shutdown":      [SYSTEMCTL, "poweroff"],
     "restart-kiosk": [SYSTEMCTL, "restart", KIOSK_SERVICE],
+    # --no-block: return straight away; the update unit restarts this app
+    "update":        [SYSTEMCTL, "start", "--no-block", UPDATE_SERVICE],
 }
-REMOTE_ACTIONS = {"reboot", "restart-kiosk"}  # what the controller may ask for
+REMOTE_ACTIONS = {"reboot", "restart-kiosk", "update"}  # what the controller may ask for
 
 DISPLAY_KEYS = ("display_on", "display_off", "display_days", "display_cec")
 
@@ -171,6 +174,7 @@ def system_info():
     disk = _disk()
     kiosk = _run(["systemctl", "is-active", KIOSK_SERVICE]) or (
         "inactive" if shutil.which("systemctl") else None)
+    update = update_state()
 
     warnings = []
     if temp is not None and temp >= HOT_C:
@@ -185,6 +189,8 @@ def system_info():
         warnings.append(f"Disk {disk['percent']}% full")
     if kiosk and kiosk != "active":
         warnings.append("Display (kiosk) isn't running")
+    if update == "failed":
+        warnings.append("Last software update failed — see journalctl -u pi-signage-update")
     if _display["error"]:
         warnings.append(f"Screen schedule: {_display['error']}")
 
@@ -201,10 +207,23 @@ def system_info():
         "throttled":    thr,
         "kiosk":        kiosk,
         "screen_off":   _display["off"],
+        "updating":     update == "activating",
         "now_showing":  _now_showing["name"],
         "warnings":     warnings,
         "collected_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+
+
+def update_state():
+    """'activating' while an update runs, 'failed' if the last one failed, else None."""
+    # `systemctl is-active` exits non-zero for these states, so read stdout directly
+    try:
+        r = subprocess.run(["systemctl", "is-active", UPDATE_SERVICE],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    state = r.stdout.strip()
+    return state if state in ("activating", "failed") else None
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +232,7 @@ def system_info():
 
 def run_action(name, delay=1.5):
     """
-    Run reboot / shutdown / restart-kiosk shortly after returning, so the
+    Run reboot / shutdown / restart-kiosk / update shortly after returning, so the
     HTTP response (or sync acknowledgement) gets out first.
     Returns None on success, or an error message.
     """
@@ -328,7 +347,7 @@ def start_display_thread():
 
 
 __all__ = [
-    "system_info", "run_action", "ACTIONS", "REMOTE_ACTIONS", "DISPLAY_KEYS",
+    "system_info", "update_state", "run_action", "ACTIONS", "REMOTE_ACTIONS", "DISPLAY_KEYS",
     "normalize_display_settings", "screen_should_be_on", "screen_is_off",
     "check_screen", "start_display_thread", "set_now_showing", "ScheduleError",
 ]

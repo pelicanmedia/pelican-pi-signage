@@ -11,6 +11,7 @@ set -euo pipefail
 APP_DIR="/opt/pi-signage"
 SERVICE_FLASK="pi-signage.service"
 SERVICE_KIOSK="pi-signage-kiosk.service"
+SERVICE_UPDATE="pi-signage-update.service"
 GITHUB_RAW="https://raw.githubusercontent.com/pelicanmedia/pelican-pi-signage/main"
 
 INSTALL_USER="${SUDO_USER:-}"
@@ -170,15 +171,17 @@ chmod 600 "$APP_DIR/.env"
 [ -f "$APP_DIR/signage.db" ] && chmod 600 "$APP_DIR/signage.db"
 
 # ---------------------------------------------------------------------------
-# Device controls: let the media server reboot, shut down and restart the
-# kiosk — and nothing else — without a password
+# Device controls: let the media server reboot, shut down, restart the kiosk
+# and start a software update — and nothing else — without a password.
+# The update runs as a root-owned systemd unit, never a script in $APP_DIR
+# (which the desktop user owns and could edit).
 # ---------------------------------------------------------------------------
-echo "==> Allowing reboot / shut down / restart display from the admin page…"
+echo "==> Allowing reboot / shut down / restart display / update from the admin page…"
 SUDOERS_FILE="/etc/sudoers.d/pi-signage"
 SUDOERS_TMP="$(mktemp)"
 cat > "$SUDOERS_TMP" << EOF
 # Pelican Pi Signage — device controls in the admin page and from the controller
-$INSTALL_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl restart $SERVICE_KIOSK
+$INSTALL_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl restart $SERVICE_KIOSK, /usr/bin/systemctl start --no-block $SERVICE_UPDATE
 EOF
 if visudo -cf "$SUDOERS_TMP" >/dev/null; then
     install -m 440 -o root -g root "$SUDOERS_TMP" "$SUDOERS_FILE"
@@ -210,6 +213,7 @@ install_service() {
 
 install_service "$SERVICE_FLASK"
 install_service "$SERVICE_KIOSK"
+install_service "$SERVICE_UPDATE"   # started on demand only, never enabled
 
 # ---------------------------------------------------------------------------
 # Enable and start services

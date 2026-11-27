@@ -545,13 +545,49 @@ $("saveBgColor").addEventListener("click", async () => {
 // Init
 // -------------------------------------------------------------------------
 
+function showUpdating(badge) {
+  badge.textContent = "Updating… the page will reload";
+  badge.disabled = true;
+  badge.classList.remove("hidden");
+}
+
+// After an update starts the app restarts, so keep asking until it answers
+// with a different version (or the update stops), then reload
+function waitForUpdate(fromVersion) {
+  const started = Date.now();
+  const timer = setInterval(async () => {
+    try {
+      const v = await fetch("/api/version").then(r => r.json());
+      if (v.installed !== fromVersion || (!v.updating && Date.now() - started > 60000)) {
+        clearInterval(timer);
+        location.reload();
+      }
+    } catch (_) { /* restarting — try again */ }
+  }, 5000);
+}
+
 async function checkVersion() {
   try {
     const v = await fetch("/api/version").then(r => r.json());
     const info  = document.getElementById("versionInfo");
     const badge = document.getElementById("updateBadge");
     if (info && v.installed !== "unknown") info.textContent = `v${v.installed}`;
-    if (badge && v.update_available) badge.classList.remove("hidden");
+    if (!badge) return;
+    if (v.updating) {
+      showUpdating(badge);
+      waitForUpdate(v.installed);
+    } else if (v.update_available) {
+      badge.textContent = `Update to v${v.latest}`;
+      badge.classList.remove("hidden");
+      badge.onclick = async () => {
+        if (!confirm(`Update to v${v.latest} now?\n\nThis takes a few minutes. The screen goes blank briefly while the software restarts.`)) return;
+        const res = await fetch("/api/system/update", { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { toast(body.error || "Update failed to start", true); return; }
+        showUpdating(badge);
+        waitForUpdate(v.installed);
+      };
+    }
   } catch (_) {}
 }
 

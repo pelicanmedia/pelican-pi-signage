@@ -1,0 +1,18 @@
+[Unit]
+Description=Pi Signage software update
+# Started on request from the admin page or the controller (via the sudoers
+# rule the installer adds). Runs the installer as root, in its own unit so it
+# keeps going when the installer restarts pi-signage.service.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The installer uses SUDO_USER to find the desktop user
+Environment=SUDO_USER=INSTALL_USER
+# No terminal: apt must never stop to ask a question
+Environment=DEBIAN_FRONTEND=noninteractive
+ExecStart=/bin/bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/pelicanmedia/pelican-pi-signage/main/install.sh | bash'
+TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal

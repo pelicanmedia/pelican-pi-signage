@@ -338,11 +338,12 @@ def _prepare_if_video(sync_uuid, filepath):
 
 def _run_commands(controller_url, api_key, commands):
     """
-    Carry out commands from the controller (reboot, restart-kiosk).
+    Carry out commands from the controller (reboot, restart-kiosk, update).
 
     Each command is acknowledged *before* it runs, and only run if the
     controller accepted the acknowledgement, so a reboot can't repeat in a
     loop. Command ids already done are remembered as a second safeguard.
+    An update runs in its own systemd unit, which restarts this app.
     """
     import device
     with _get_db() as conn:

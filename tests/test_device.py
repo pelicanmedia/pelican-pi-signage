@@ -3,10 +3,13 @@
 import datetime
 import os
 import sys
+import subprocess
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import device  # noqa: E402
 from device import normalize_display_settings, screen_should_be_on  # noqa: E402
 from schedule import ScheduleError  # noqa: E402
 
@@ -64,6 +67,34 @@ class NormalizeDisplayTests(unittest.TestCase):
                     {"display_on": "09:00", "display_off": "09:00"}, {"display_days": "8"}):
             with self.subTest(bad=bad), self.assertRaises(ScheduleError):
                 normalize_display_settings(bad, {})
+
+
+class UpdateTests(unittest.TestCase):
+    def test_update_is_remote_action(self):
+        self.assertIn("update", device.REMOTE_ACTIONS)
+        # Must match the installer's sudoers rule exactly
+        self.assertEqual(device.ACTIONS["update"],
+                         ["/usr/bin/systemctl", "start", "--no-block", "pi-signage-update.service"])
+
+    def _state(self, stdout):
+        done = subprocess.CompletedProcess([], 3, stdout=stdout + "\n", stderr="")
+        with mock.patch("device.subprocess.run", return_value=done):
+            return device.update_state()
+
+    def test_update_state(self):
+        self.assertEqual(self._state("activating"), "activating")
+        self.assertEqual(self._state("failed"), "failed")
+        self.assertIsNone(self._state("inactive"))
+
+    def test_update_state_without_systemctl(self):
+        with mock.patch("device.subprocess.run", side_effect=FileNotFoundError):
+            self.assertIsNone(device.update_state())
+
+    def test_failed_update_warns(self):
+        with mock.patch("device.update_state", return_value="failed"):
+            info = device.system_info()
+        self.assertFalse(info["updating"])
+        self.assertTrue(any("update failed" in w for w in info["warnings"]))
 
 
 if __name__ == "__main__":
