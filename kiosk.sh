@@ -57,6 +57,12 @@ if [ -z "$SESSION" ]; then
 fi
 log "Desktop session: $SESSION"
 
+# A system service gets no session D-Bus address; without it Chromium logs
+# "Failed to connect to the bus" errors every few seconds.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+fi
+
 # --- Wait for the local media server --------------------------------------
 for _ in $(seq 1 60); do
     curl -fs -o /dev/null "$PLAYER_URL" && break
