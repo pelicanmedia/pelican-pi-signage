@@ -46,7 +46,8 @@ apt-get install -y \
     chromium \
     xdotool \
     unclutter \
-    ffmpeg
+    ffmpeg \
+    unzip
 
 # ---------------------------------------------------------------------------
 # Create directory structure
@@ -54,8 +55,8 @@ apt-get install -y \
 echo "==> Creating application directory at $APP_DIR…"
 mkdir -p "$APP_DIR/static/uploads"
 mkdir -p "$APP_DIR/static/css"
-mkdir -p "$APP_DIR/static/js"
-mkdir -p "$APP_DIR/templates"
+mkdir -p "$APP_DIR/static/js/vendor"
+mkdir -p "$APP_DIR/templates/widgets"
 
 # ---------------------------------------------------------------------------
 # Download application files from GitHub
@@ -66,6 +67,8 @@ dl() { curl -fsSL "$GITHUB_RAW/$1" -o "$APP_DIR/$1"; }
 dl app.py
 dl sync.py
 dl schedule.py
+dl content.py
+dl youtube.py
 dl media.py
 dl kiosk.sh
 dl VERSION
@@ -74,12 +77,18 @@ dl templates/admin.html
 dl templates/login.html
 dl templates/setup.html
 dl templates/account.html
+dl templates/widgets/clock.html
+dl templates/widgets/weather.html
+dl templates/widgets/text.html
 dl reset-password.sh
 dl static/css/admin.css
 dl static/css/player.css
 dl static/js/admin.js
 dl static/js/player.js
 dl static/js/schedule-ui.js
+dl static/js/content-ui.js
+dl static/js/vendor/hls.light.min.js
+dl static/js/vendor/hls.js-LICENSE.txt
 
 # ---------------------------------------------------------------------------
 # Save install config
@@ -101,8 +110,46 @@ GITHUB_TOKEN=
 
 # Optional: extra Chromium flags for the kiosk, space-separated
 CHROMIUM_EXTRA_FLAGS=
+
+# Optional: extra yt-dlp arguments for YouTube downloads
+YTDLP_EXTRA_ARGS=
 EOF
 fi
+
+# ---------------------------------------------------------------------------
+# YouTube downloads: yt-dlp, plus Deno (yt-dlp needs it for YouTube)
+# Re-running the installer updates both. yt-dlp also updates itself daily.
+# ---------------------------------------------------------------------------
+echo "==> Installing yt-dlp…"
+mkdir -p "$APP_DIR/bin"
+if curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+        -o "$APP_DIR/bin/yt-dlp.new"; then
+    mv "$APP_DIR/bin/yt-dlp.new" "$APP_DIR/bin/yt-dlp"
+else
+    rm -f "$APP_DIR/bin/yt-dlp.new"
+    echo "    WARNING: couldn't download yt-dlp — YouTube downloads won't work"
+fi
+
+case "$(dpkg --print-architecture 2>/dev/null)" in
+    arm64) DENO_TARGET="aarch64-unknown-linux-gnu" ;;
+    amd64) DENO_TARGET="x86_64-unknown-linux-gnu" ;;
+    *)     DENO_TARGET="" ;;
+esac
+if [ -n "$DENO_TARGET" ]; then
+    echo "==> Installing Deno (used by yt-dlp for YouTube)…"
+    DENO_ZIP="$(mktemp)"
+    if curl -fsSL "https://github.com/denoland/deno/releases/latest/download/deno-$DENO_TARGET.zip" \
+            -o "$DENO_ZIP" && unzip -o -q "$DENO_ZIP" -d "$APP_DIR/bin"; then
+        echo "    Deno $("$APP_DIR/bin/deno" --version 2>/dev/null | head -n1 | awk '{print $2}') installed"
+    else
+        echo "    WARNING: couldn't install Deno — YouTube downloads may fail"
+    fi
+    rm -f "$DENO_ZIP"
+else
+    echo "    NOTE: Deno isn't available for this 32-bit system, so YouTube downloads"
+    echo "          won't work (other video sites may). Use 64-bit Raspberry Pi OS for YouTube."
+fi
+
 
 # ---------------------------------------------------------------------------
 # Set permissions

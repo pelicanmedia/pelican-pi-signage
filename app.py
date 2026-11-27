@@ -11,7 +11,9 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from schedule import SCHEDULE_FIELDS, ScheduleError, is_active, normalize_schedule
+from content import OptionsError, dump_options, normalize_options, parse_options
 import media
+import youtube
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
@@ -114,6 +116,10 @@ def init_db():
             if not _column_exists(conn, "assets", col):
                 conn.execute(f"ALTER TABLE assets ADD COLUMN {col} TEXT")
 
+        # Migration: per-item content options, JSON (v1.5.0)
+        if not _column_exists(conn, "assets", "options"):
+            conn.execute("ALTER TABLE assets ADD COLUMN options TEXT")
+
         # Migration: add updated_at to settings
         if not _column_exists(conn, "settings", "updated_at"):
             conn.execute("ALTER TABLE settings ADD COLUMN updated_at TEXT")
@@ -167,6 +173,13 @@ def init_db():
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def asset_json(row):
+    """Asset row -> dict for the browser, with options parsed."""
+    a = dict(row)
+    a["options"] = parse_options(a.get("options"))
+    return a
 
 
 def next_position(conn):
@@ -308,7 +321,19 @@ def player():
 @app.route("/admin")
 @login_required
 def admin():
-    return render_template("admin.html")
+    return render_template("admin.html", youtube_available=youtube.available())
+
+
+# Built-in slides (clock, weather, text). Open like the player, because the
+# kiosk browser shows them without logging in.
+WIDGETS = {"clock", "weather", "text"}
+
+
+@app.route("/widgets/<name>")
+def widget(name):
+    if name not in WIDGETS:
+        return "Not found", 404
+    return render_template(f"widgets/{name}.html")
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +349,7 @@ def api_playlist():
         ).fetchall()
     out = []
     for r in rows:
-        a = dict(r)
+        a = asset_json(r)
         a["active_now"] = is_active(a)
         out.append(a)
     return jsonify(out)
@@ -375,7 +400,7 @@ def api_upload():
 
     with get_db() as conn:
         asset = conn.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
-    return jsonify(dict(asset)), 201
+    return jsonify(asset_json(asset)), 201
 
 
 @app.route("/api/url", methods=["POST"])
@@ -388,18 +413,54 @@ def api_add_url():
 
     name = data.get("name", "").strip() or src
     duration = int(data.get("duration", 30))
+    try:
+        options = normalize_options(data)
+    except OptionsError as e:
+        return jsonify({"error": str(e)}), 400
 
     with get_db() as conn:
         pos = next_position(conn)
         cur = conn.execute(
-            "INSERT INTO assets (name, type, src, duration, enabled, position, updated_at)"
-            " VALUES (?,?,?,?,1,?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-            (name, "url", src, duration, pos),
+            "INSERT INTO assets (name, type, src, duration, enabled, position, options, updated_at)"
+            " VALUES (?,?,?,?,1,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            (name, "url", src, duration, pos, options),
         )
         conn.commit()
         asset = conn.execute("SELECT * FROM assets WHERE id=?", (cur.lastrowid,)).fetchone()
 
-    return jsonify(dict(asset)), 201
+    return jsonify(asset_json(asset)), 201
+
+
+@app.route("/api/youtube", methods=["POST"])
+@login_required
+def api_add_youtube():
+    """Download a video from YouTube (or another site yt-dlp supports)."""
+    data = request.get_json(force=True) or {}
+    url = data.get("url", "").strip()
+    if not youtube.is_valid_url(url):
+        return jsonify({"error": "Enter a web address starting with https://"}), 400
+    if not youtube.available():
+        return jsonify({"error": "yt-dlp is not installed on this Pi — re-run the installer"}), 400
+
+    # Until the download finishes, src holds the web address and the name
+    # defaults to it (replaced by the video's title when known).
+    name = data.get("name", "").strip() or url
+    with get_db() as conn:
+        pos = next_position(conn)
+        cur = conn.execute(
+            "INSERT INTO assets (name, type, src, duration, enabled, position, options,"
+            " media_status, updated_at)"
+            " VALUES (?,?,?,10,1,?,?,'processing', strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            (name, "video", url, pos, dump_options({"source_url": url})),
+        )
+        conn.commit()
+        asset_id = cur.lastrowid
+
+    media.prepare_download(asset_id)
+
+    with get_db() as conn:
+        asset = conn.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
+    return jsonify(asset_json(asset)), 201
 
 
 @app.route("/api/asset/<int:asset_id>", methods=["PATCH"])
@@ -416,21 +477,36 @@ def api_update_asset(asset_id):
         enabled  = int(data.get("enabled",  row["enabled"]))
         try:
             sched = normalize_schedule(data, dict(row))
-        except ScheduleError as e:
+            options = normalize_options(data, row["options"])
+        except (ScheduleError, OptionsError) as e:
             return jsonify({"error": str(e)}), 400
 
         conn.execute(
             "UPDATE assets SET name=?, duration=?, enabled=?,"
             " start_date=?, end_date=?, play_days=?, play_time_from=?, play_time_to=?,"
-            " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+            " options=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
             (name, duration, enabled,
              sched["start_date"], sched["end_date"], sched["play_days"],
-             sched["play_time_from"], sched["play_time_to"], asset_id),
+             sched["play_time_from"], sched["play_time_to"], options, asset_id),
         )
         conn.commit()
         asset = conn.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
 
-    return jsonify(dict(asset))
+    return jsonify(asset_json(asset))
+
+
+@app.route("/api/asset/<int:asset_id>/retry", methods=["POST"])
+@login_required
+def api_retry_asset(asset_id):
+    """Try a failed download or conversion again."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Not found"}), 404
+    if row["media_status"] != "failed":
+        return jsonify({"error": "Nothing to retry"}), 400
+    media.prepare_download(asset_id)
+    return jsonify({"success": True})
 
 
 @app.route("/api/asset/<int:asset_id>", methods=["DELETE"])
@@ -580,7 +656,7 @@ def _active_assets():
             " ORDER BY position ASC, id ASC"
         ).fetchall()
     now = datetime.datetime.now()
-    return [a for a in (dict(r) for r in rows) if is_active(a, now)]
+    return [a for a in (asset_json(r) for r in rows) if is_active(a, now)]
 
 
 def _sort_key(asset):

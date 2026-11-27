@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Clock</title>
+  <!--
+    Built-in clock slide. Query parameters (all optional):
+      tz     IANA time zone, e.g. Europe/London (default: the Pi's own)
+      h24    1 = 24-hour (default), 0 = 12-hour
+      sec    1 = show seconds
+      date   1 = show the date (default), 0 = hide
+      label  text shown above the time, e.g. "New York"
+      bg/fg  background / text colour as hex without #, e.g. 000000 / ffffff
+  -->
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg, #000); color: var(--fg, #fff);
+      font-variant-numeric: tabular-nums;
+    }
+    #label { font-size: 6vmin; opacity: .75; margin-bottom: 2vmin; }
+    #time  { font-size: 24vmin; font-weight: 600; line-height: 1; letter-spacing: -.02em; }
+    #ampm  { font-size: .35em; font-weight: 500; margin-left: .2em; opacity: .8; }
+    #date  { font-size: 6vmin; opacity: .75; margin-top: 3vmin; }
+  </style>
+</head>
+<body>
+  <div id="label" hidden></div>
+  <div id="time"></div>
+  <div id="date"></div>
+
+  <script>
+    const q = new URLSearchParams(location.search);
+    const color = v => /^[0-9a-f]{3,8}$/i.test(v || "") ? "#" + v : null;
+    if (color(q.get("bg"))) document.body.style.setProperty("--bg", color(q.get("bg")));
+    if (color(q.get("fg"))) document.body.style.setProperty("--fg", color(q.get("fg")));
+
+    const h24      = q.get("h24") !== "0";
+    const seconds  = q.get("sec") === "1";
+    const showDate = q.get("date") !== "0";
+    let tz = q.get("tz") || undefined;
+    try { new Intl.DateTimeFormat(undefined, { timeZone: tz }); } catch (_) { tz = undefined; }
+
+    if (q.get("label")) {
+      const el = document.getElementById("label");
+      el.textContent = q.get("label");
+      el.hidden = false;
+    }
+    if (!showDate) document.getElementById("date").hidden = true;
+
+    const timeFmt = new Intl.DateTimeFormat(undefined, {
+      timeZone: tz, hour: h24 ? "2-digit" : "numeric", minute: "2-digit",
+      second: seconds ? "2-digit" : undefined, hour12: !h24,
+    });
+    const dateFmt = new Intl.DateTimeFormat(undefined, {
+      timeZone: tz, weekday: "long", day: "numeric", month: "long", year: "numeric",
+    });
+
+    const timeEl = document.getElementById("time");
+    const dateEl = document.getElementById("date");
+
+    function tick() {
+      const now = new Date();
+      const parts = timeFmt.formatToParts(now);
+      const period = parts.find(p => p.type === "dayPeriod");
+      const main = parts.filter(p => p.type !== "dayPeriod").map(p => p.value).join("").trim();
+      timeEl.textContent = main;
+      if (period) {
+        const span = document.createElement("span");
+        span.id = "ampm";
+        span.textContent = period.value;
+        timeEl.appendChild(span);
+      }
+      if (showDate) dateEl.textContent = dateFmt.format(now);
+    }
+    tick();
+    setInterval(tick, 500);
+  </script>
+</body>
+</html>

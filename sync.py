@@ -79,7 +79,7 @@ def build_sync_request():
         assets = conn.execute(
             "SELECT id, name, type, src, duration, enabled, position,"
             " updated_at, sync_uuid, start_date, end_date, play_days,"
-            " play_time_from, play_time_to"
+            " play_time_from, play_time_to, options"
             " FROM assets ORDER BY position ASC, id ASC"
         ).fetchall()
         settings = conn.execute(
@@ -104,6 +104,7 @@ def build_sync_request():
         }
         for f in SCHEDULE_FIELDS:
             entry[f] = a[f]
+        entry["options"] = a["options"]  # JSON text or None
         asset_list.append(entry)
 
     settings_dict = {}
@@ -203,13 +204,19 @@ def apply_sync_response(response, cfg):
                         for f in SCHEDULE_FIELDS:
                             if f in a:
                                 updates[f] = a[f]
+                        if "options" in a:
+                            updates["options"] = a["options"]
                         set_clause = ", ".join(f"{k}=?" for k in updates)
                         conn.execute(
                             f"UPDATE assets SET {set_clause} WHERE sync_uuid=?",
                             (*updates.values(), sync_uuid),
                         )
                 else:
-                    # New asset from controller
+                    # New asset from controller. An image/video with no file to
+                    # download (an older controller that no longer has it) would
+                    # never play, so wait: it's offered again on every sync.
+                    if a["type"] in ("image", "video") and not token and not src:
+                        continue
                     if src is None:
                         src = ""  # placeholder; updated after download
                     # Find next available position
@@ -219,14 +226,15 @@ def apply_sync_response(response, cfg):
                     conn.execute(
                         "INSERT INTO assets"
                         " (name, type, src, duration, enabled, position, updated_at, sync_uuid,"
-                        "  start_date, end_date, play_days, play_time_from, play_time_to)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "  start_date, end_date, play_days, play_time_from, play_time_to, options)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             a["name"], a["type"], src,
                             a["duration"], a["enabled"],
                             a.get("position", max_pos + 1),
                             a["updated_at"], sync_uuid,
                             *(a.get(f) for f in SCHEDULE_FIELDS),
+                            a.get("options"),
                         ),
                     )
 

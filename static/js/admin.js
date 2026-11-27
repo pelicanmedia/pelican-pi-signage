@@ -24,13 +24,18 @@ function toast(msg, isError = false) {
   setTimeout(() => el.classList.remove("opacity-100"), 2500);
 }
 
-function typeBadge(type) {
+function typeBadge(asset) {
   const map = {
-    image: "bg-blue-100 text-blue-700",
-    video: "bg-purple-100 text-purple-700",
-    url:   "bg-green-100 text-green-700",
+    image:  "bg-blue-100 text-blue-700",
+    video:  "bg-purple-100 text-purple-700",
+    url:    "bg-green-100 text-green-700",
+    slide:  "bg-amber-100 text-amber-700",
+    stream: "bg-rose-100 text-rose-700",
   };
-  return `<span class="px-2 py-0.5 rounded-full text-xs font-medium ${map[type] || "bg-gray-100 text-gray-600"}">${type}</span>`;
+  let label = asset.type;
+  if (asset.type === "url" && /^\/widgets\//.test(asset.src)) label = "slide";
+  else if (asset.type === "url" && /\.m3u8(\?.*)?$/i.test(asset.src)) label = "stream";
+  return `<span class="px-2 py-0.5 rounded-full text-xs font-medium ${map[label] || "bg-gray-100 text-gray-600"}">${label}</span>`;
 }
 
 // -------------------------------------------------------------------------
@@ -80,12 +85,13 @@ function renderPlaylist() {
           ${escHtml(asset.name)}
         </div>
         <div class="text-xs text-gray-400 truncate max-w-xs">${escHtml(asset.src)}</div>
+        ${contentLine(asset)}
         ${scheduleLine(asset)}
         ${mediaLine(asset)}
       </td>
-      <td class="px-4 py-3">${typeBadge(asset.type)}</td>
+      <td class="px-4 py-3">${typeBadge(asset)}</td>
       <td class="px-4 py-3">
-        ${asset.type === 'video' || (asset.type === 'url' && /\.(mp4|webm|mov|avi|m3u8)(\?.*)?$/i.test(asset.src))
+        ${hasAutoDuration(asset)
           ? `<span class="text-xs text-gray-400 italic">${asset.duration}s (auto)</span>`
           : `<input type="number" value="${asset.duration}" min="1" max="3600" data-id="${asset.id}"
                class="duration-input w-20 border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />`
@@ -100,6 +106,13 @@ function renderPlaylist() {
         </button>
       </td>
       <td class="px-4 py-3 text-center whitespace-nowrap">
+        ${isRefreshable(asset) ? `<button class="refresh-btn text-gray-400 hover:text-indigo-600 transition mr-2" data-id="${asset.id}"
+                title="Auto-refresh" aria-label="Auto-refresh ${escHtml(asset.name)}">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>` : ""}
         <button class="schedule-btn text-gray-400 hover:text-indigo-600 transition mr-2" data-id="${asset.id}"
                 title="Schedule" aria-label="Schedule ${escHtml(asset.name)}">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -125,16 +138,29 @@ function renderPlaylist() {
 }
 
 function mediaLine(asset) {
+  const downloading = /^https?:\/\//.test(asset.src);
   if (asset.media_status === "processing") {
+    const what = downloading ? "Downloading…" : "Converting for smooth playback…";
     return `<div class="text-xs mt-1"><span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-medium">
       <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity=".25"/><path d="M22 12a10 10 0 00-10-10" stroke="currentColor" stroke-width="3"/></svg>
-      Converting for smooth playback… (not shown until done)</span></div>`;
+      ${what} (not shown until done)</span></div>`;
   }
   if (asset.media_status === "failed") {
-    return `<div class="text-xs mt-1"><span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium"
-      title="${escHtml(asset.media_error || "")}">Conversion failed — this video won't play. Try re-exporting it as H.264 MP4.</span></div>`;
+    const msg = downloading
+      ? "Download failed"
+      : "Conversion failed — this video won't play. Try re-exporting it as H.264 MP4.";
+    return `<div class="text-xs mt-1 flex items-center flex-wrap gap-1.5">
+      <span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">${msg}</span>
+      <button class="retry-btn text-indigo-600 hover:underline" data-id="${asset.id}">Retry</button>
+      ${asset.media_error ? `<span class="basis-full text-red-600/80 truncate max-w-xs" title="${escHtml(asset.media_error)}">${escHtml(asset.media_error)}</span>` : ""}
+    </div>`;
   }
   return "";
+}
+
+function contentLine(asset) {
+  const text = contentSummary(asset);
+  return text ? `<div class="text-xs text-gray-500 mt-0.5">${escHtml(text)}</div>` : "";
 }
 
 function scheduleLine(asset) {
@@ -190,6 +216,27 @@ function attachRowListeners() {
         await loadPlaylist();
         toast("Schedule saved");
       });
+    });
+  });
+
+  document.querySelectorAll(".refresh-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const asset = playlist.find(a => a.id === +btn.dataset.id);
+      if (!asset) return;
+      openRefreshEditor(asset, async fields => {
+        await patchAsset(asset.id, fields);
+        await loadPlaylist();
+        toast("Auto-refresh saved");
+      });
+    });
+  });
+
+  document.querySelectorAll(".retry-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const res = await fetch(`/api/asset/${btn.dataset.id}/retry`, { method: "POST" });
+      if (!res.ok) { toast("Couldn't retry", true); return; }
+      await loadPlaylist();
+      toast("Trying again…");
     });
   });
 
@@ -359,16 +406,52 @@ $("urlForm").addEventListener("submit", async e => {
   const src      = $("urlSrc").value.trim();
   const name     = $("urlName").value.trim();
   const duration = parseInt($("urlDuration").value, 10);
+  const refresh  = parseInt($("urlRefresh").value, 10) || null;
 
   const res = await fetch("/api/url", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ src, name, duration }),
+    body: JSON.stringify({ src, name, duration, options: { refresh_seconds: refresh } }),
   });
   if (!res.ok) { toast("Failed to add URL", true); return; }
   $("urlForm").reset();
   toast("URL added");
   await loadPlaylist();
+});
+
+// -------------------------------------------------------------------------
+// YouTube (downloaded by the Pi)
+// -------------------------------------------------------------------------
+$("youtubeForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const res = await fetch("/api/youtube", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: $("youtubeUrl").value.trim(), name: $("youtubeName").value.trim() }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) { toast(body.error || "Couldn't add video", true); return; }
+  $("youtubeForm").reset();
+  toast("Downloading — it will play once ready");
+  await loadPlaylist();
+});
+
+// -------------------------------------------------------------------------
+// Built-in slides
+// -------------------------------------------------------------------------
+document.querySelectorAll(".slide-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    openSlideEditor(btn.dataset.slide, async ({ src, name, duration }) => {
+      const res = await fetch("/api/url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ src, name, duration }),
+      });
+      if (!res.ok) throw new Error("Couldn't add slide");
+      toast("Slide added");
+      await loadPlaylist();
+    });
+  });
 });
 
 // -------------------------------------------------------------------------

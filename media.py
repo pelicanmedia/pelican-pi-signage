@@ -7,6 +7,10 @@ anything above 1080p is too heavy. Videos that need it are converted to
 H.264 1080p MP4 in a single background worker; the asset is hidden from the
 player (media_status='processing') until the new file is ready.
 
+Videos from YouTube and similar sites are downloaded by the same worker
+(see youtube.py): the asset's src holds the web address until the file is
+saved, then it's checked and converted like an upload.
+
 Asset columns used:
     media_status  NULL (ready) | 'processing' | 'failed'
     media_error   short error text when failed
@@ -18,6 +22,8 @@ import queue
 import sqlite3
 import subprocess
 import threading
+
+import youtube
 
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 DB_PATH       = os.path.join(BASE_DIR, "signage.db")
@@ -140,33 +146,55 @@ def _src_to_path(src):
 
 def _process(asset_id):
     with _get_db() as conn:
-        row = conn.execute("SELECT id, src FROM assets WHERE id=?", (asset_id,)).fetchone()
-    if not row or not row["src"].startswith("/static/uploads/"):
+        row = conn.execute("SELECT id, name, src FROM assets WHERE id=?", (asset_id,)).fetchone()
+    if not row:
         return  # deleted meanwhile
+    src = row["src"] or ""
+    downloaded_path = None
 
-    src_path = _src_to_path(row["src"])
     try:
-        if not os.path.exists(src_path):
-            raise RuntimeError("Source file is missing")
-        dest_path = _unique_mp4_path(src_path)
-        transcode(src_path, dest_path)
-        info = probe(dest_path) or {}
-        new_src = f"/static/uploads/{os.path.basename(dest_path)}"
+        if src.startswith("/static/uploads/"):
+            src_path = _src_to_path(src)
+            if not os.path.exists(src_path):
+                raise RuntimeError("Source file is missing")
+            title = None
+        elif youtube.is_valid_url(src):
+            # Video from YouTube etc.: src holds the web address until downloaded
+            youtube.maybe_self_update()
+            src_path, title = youtube.download(src, UPLOAD_FOLDER)
+            downloaded_path = src_path
+        else:
+            return
+
+        final_path = src_path
+        if needs_transcode(src_path, probe(src_path)):
+            final_path = _unique_mp4_path(src_path)
+            transcode(src_path, final_path)
+        info = probe(final_path) or {}
+        new_src = f"/static/uploads/{os.path.basename(final_path)}"
 
         with _get_db() as conn:
-            still_there = conn.execute("SELECT id FROM assets WHERE id=?", (asset_id,)).fetchone()
-            if not still_there:
-                os.remove(dest_path)  # asset was deleted while converting
+            current = conn.execute("SELECT id, name, src FROM assets WHERE id=?", (asset_id,)).fetchone()
+            if not current:
+                # Asset was deleted while working on it
+                for p in {final_path, downloaded_path}:
+                    if p and os.path.exists(p):
+                        os.remove(p)
                 return
+            # Name defaults to the web address until we know the video's title
+            name = title if (title and current["name"] == src) else current["name"]
             conn.execute(
-                "UPDATE assets SET src=?, duration=COALESCE(?, duration),"
+                "UPDATE assets SET name=?, src=?, duration=COALESCE(?, duration),"
                 " media_status=NULL, media_error=NULL WHERE id=?",
-                (new_src, info.get("duration"), asset_id),
+                (name, new_src, info.get("duration"), asset_id),
             )
             conn.commit()
-        if os.path.abspath(dest_path) != os.path.abspath(src_path):
+        if os.path.abspath(final_path) != os.path.abspath(src_path):
             os.remove(src_path)
     except Exception as e:
+        # A download that couldn't be converted is useless; keep the web address
+        if downloaded_path and os.path.exists(downloaded_path):
+            os.remove(downloaded_path)
         with _get_db() as conn:
             conn.execute(
                 "UPDATE assets SET media_status='failed', media_error=? WHERE id=?",
@@ -218,8 +246,21 @@ def prepare_video(asset_id, filepath):
     return convert
 
 
+def prepare_download(asset_id):
+    """Mark an asset processing and queue it (downloads web addresses, converts uploads)."""
+    with _get_db() as conn:
+        conn.execute(
+            "UPDATE assets SET media_status='processing', media_error=NULL WHERE id=?",
+            (asset_id,),
+        )
+        conn.commit()
+    _ensure_worker()
+    _queue.put(asset_id)
+
+
 def resume_pending():
-    """Re-queue conversions interrupted by a restart."""
+    """Re-queue conversions and downloads interrupted by a restart."""
+    youtube.cleanup_partial(UPLOAD_FOLDER)
     try:
         with _get_db() as conn:
             rows = conn.execute(

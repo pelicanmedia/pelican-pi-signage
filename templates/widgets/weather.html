@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Weather</title>
+  <!--
+    Built-in weather slide, using Open-Meteo (free, no API key).
+    Query parameters:
+      lat, lon   location (required)
+      place      name shown at the top, e.g. "Manchester"
+      units      c (default) or f
+      bg/fg      background / text colour as hex without #
+    The last forecast is kept in the browser, so the slide still shows
+    something (marked "offline") when the internet is down.
+  -->
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg, #0f172a); color: var(--fg, #fff);
+      font-variant-numeric: tabular-nums;
+    }
+    svg { display: block; }
+    #place { font-size: 6vmin; font-weight: 600; opacity: .85; }
+    #now   { display: flex; align-items: center; gap: 4vmin; margin: 3vmin 0 1vmin; }
+    #now svg { width: 30vmin; height: 30vmin; }
+    #temp  { font-size: 26vmin; font-weight: 600; line-height: 1; }
+    #desc  { font-size: 5.5vmin; opacity: .85; }
+    #extra { font-size: 3.6vmin; opacity: .65; margin-top: 1.5vmin; }
+    #days  { display: flex; gap: 8vmin; margin-top: 6vmin; }
+    .day   { display: flex; flex-direction: column; align-items: center; font-size: 4vmin; }
+    .day svg { width: 11vmin; height: 11vmin; margin: 1vmin 0; }
+    .day .lo { opacity: .6; }
+    #status { position: fixed; bottom: 2.5vmin; right: 3vmin; font-size: 2.4vmin; opacity: .45; }
+    #status.offline { opacity: .8; color: #fbbf24; }
+    #msg { font-size: 4vmin; opacity: .7; text-align: center; padding: 0 6vw; }
+  </style>
+</head>
+<body>
+  <div id="place"></div>
+  <div id="msg" hidden></div>
+  <div id="main" hidden>
+    <div id="now"><span id="nowIcon"></span><div id="temp"></div></div>
+    <div id="desc" style="text-align:center"></div>
+    <div id="extra" style="text-align:center"></div>
+    <div id="days"></div>
+  </div>
+  <div id="status"></div>
+
+  <script>
+    const q = new URLSearchParams(location.search);
+    const color = v => /^[0-9a-f]{3,8}$/i.test(v || "") ? "#" + v : null;
+    if (color(q.get("bg"))) document.body.style.setProperty("--bg", color(q.get("bg")));
+    if (color(q.get("fg"))) document.body.style.setProperty("--fg", color(q.get("fg")));
+
+    const lat = parseFloat(q.get("lat"));
+    const lon = parseFloat(q.get("lon"));
+    const fahrenheit = (q.get("units") || "c").toLowerCase() === "f";
+    const REFRESH_MS = 15 * 60 * 1000;
+    const STALE_MS   = 60 * 60 * 1000;
+    const cacheKey   = `weather:${lat},${lon},${fahrenheit ? "f" : "c"}`;
+
+    document.getElementById("place").textContent = q.get("place") || "";
+
+    // --- Icons (inline so they work offline) ------------------------------
+    const S = 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"';
+    const SUN    = `<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>`;
+    const MOON   = `<path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/>`;
+    const CLOUD  = `<path d="M7 18h10a4 4 0 00.6-7.95A6 6 0 006.2 9.1 4.5 4.5 0 007 18z"/>`;
+    const SMALL_SUN = `<circle cx="8" cy="8" r="3"/><path d="M8 2v1.3M2 8h1.3M3.8 3.8l.9.9M12.2 3.8l-.9.9"/>`;
+    const SMALL_MOON = `<path d="M11 9.5A4.5 4.5 0 015.5 4 4.5 4.5 0 1011 9.5z"/>`;
+    const PART_CLOUD = `<path d="M9 19h9a3.5 3.5 0 00.5-6.96A5.2 5.2 0 008.6 11 4 4 0 009 19z"/>`;
+    const RAIN   = `<path d="M8 20.5l-1 2M12 20.5l-1 2M16 20.5l-1 2"/>`;
+    const SNOW   = `<path d="M8 21h.01M12 22h.01M16 21h.01"/>`;
+    const BOLT   = `<path d="M12.5 17l-2 3.5h3l-2 3"/>`;
+    const FOG    = `<path d="M4 9h16M3 13h18M5 17h14"/>`;
+    const svg = inner => `<svg viewBox="0 0 24 24" ${S}>${inner}</svg>`;
+
+    function icon(code, isDay) {
+      if (code === 0)  return svg(isDay ? SUN : MOON);
+      if (code <= 2)   return svg((isDay ? SMALL_SUN : SMALL_MOON) + PART_CLOUD);
+      if (code === 3)  return svg(CLOUD);
+      if (code <= 48)  return svg(FOG);
+      if (code >= 95)  return svg(CLOUD.replace("18h", "16h") + BOLT);
+      if ((code >= 71 && code <= 77) || code === 85 || code === 86)
+        return svg(`<g transform="translate(0,-2)">${CLOUD}</g>` + SNOW);
+      return svg(`<g transform="translate(0,-2)">${CLOUD}</g>` + RAIN);
+    }
+
+    function describe(code) {
+      if (code === 0) return "Clear";
+      if (code === 1) return "Mainly clear";
+      if (code === 2) return "Partly cloudy";
+      if (code === 3) return "Overcast";
+      if (code <= 48) return "Fog";
+      if (code <= 55) return "Drizzle";
+      if (code <= 57) return "Freezing drizzle";
+      if (code <= 65) return "Rain";
+      if (code <= 67) return "Freezing rain";
+      if (code <= 75) return "Snow";
+      if (code === 77) return "Snow grains";
+      if (code <= 82) return "Rain showers";
+      if (code <= 86) return "Snow showers";
+      return "Thunderstorm";
+    }
+
+    // --- Data --------------------------------------------------------------
+    function loadCache() {
+      try { return JSON.parse(localStorage.getItem(cacheKey)); } catch (_) { return null; }
+    }
+    function saveCache(entry) {
+      try { localStorage.setItem(cacheKey, JSON.stringify(entry)); } catch (_) {}
+    }
+
+    async function fetchWeather() {
+      const url = "https://api.open-meteo.com/v1/forecast"
+        + `?latitude=${lat}&longitude=${lon}`
+        + "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day"
+        + "&daily=weather_code,temperature_2m_max,temperature_2m_min"
+        + "&timezone=auto&forecast_days=4"
+        + (fahrenheit ? "&temperature_unit=fahrenheit&wind_speed_unit=mph" : "");
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
+    function render(entry) {
+      const d = entry.data;
+      const c = d.current;
+      const deg = "°";
+      document.getElementById("msg").hidden = true;
+      document.getElementById("main").hidden = false;
+      document.getElementById("nowIcon").innerHTML = icon(c.weather_code, c.is_day === 1);
+      document.getElementById("temp").textContent = Math.round(c.temperature_2m) + deg;
+      document.getElementById("desc").textContent = describe(c.weather_code);
+      document.getElementById("extra").textContent =
+        `Humidity ${Math.round(c.relative_humidity_2m)}%  ·  Wind ${Math.round(c.wind_speed_10m)} ${fahrenheit ? "mph" : "km/h"}`;
+
+      const days = document.getElementById("days");
+      days.innerHTML = "";
+      for (let i = 1; i < Math.min(4, d.daily.time.length); i++) {
+        const [y, m, dd] = d.daily.time[i].split("-").map(Number);
+        const name = new Date(y, m - 1, dd).toLocaleDateString(undefined, { weekday: "short" });
+        const el = document.createElement("div");
+        el.className = "day";
+        el.innerHTML = `<div></div>${icon(d.daily.weather_code[i], true)}<div><span class="hi"></span> <span class="lo"></span></div>`;
+        el.firstChild.textContent = name;
+        el.querySelector(".hi").textContent = Math.round(d.daily.temperature_2m_max[i]) + deg;
+        el.querySelector(".lo").textContent = Math.round(d.daily.temperature_2m_min[i]) + deg;
+        days.appendChild(el);
+      }
+
+      const status = document.getElementById("status");
+      const at = new Date(entry.fetched_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      const stale = Date.now() - entry.fetched_at > STALE_MS;
+      status.textContent = stale ? `Offline — last updated ${at}` : `Updated ${at}`;
+      status.classList.toggle("offline", stale);
+    }
+
+    function showMessage(text) {
+      document.getElementById("main").hidden = true;
+      const msg = document.getElementById("msg");
+      msg.textContent = text;
+      msg.hidden = false;
+    }
+
+    async function update() {
+      try {
+        const entry = { fetched_at: Date.now(), data: await fetchWeather() };
+        saveCache(entry);
+        render(entry);
+      } catch (_) {
+        const cached = loadCache();
+        if (cached) render(cached);
+        else showMessage("Weather is unavailable — check the internet connection.");
+      }
+    }
+
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
+      showMessage("No location set for this weather slide.");
+    } else {
+      const cached = loadCache();
+      if (cached) render(cached);  // show something straight away
+      update();
+      setInterval(update, REFRESH_MS);
+    }
+  </script>
+</body>
+</html>

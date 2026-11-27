@@ -32,6 +32,18 @@ html, body {
 .layer img   { object-fit: contain; }
 .layer video { object-fit: contain; background: #000; }
 
+/* Message shown in place of content that can't be displayed */
+.layer .message {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1rem; padding: 2rem; text-align: center;
+  background: #111; color: #888; font-family: system-ui, sans-serif;
+}
+.layer .message svg { width: 48px; height: 48px; opacity: .4; }
+.layer .message-title  { font-size: 1rem; font-weight: 600; color: #aaa; }
+.layer .message-detail { font-size: .8rem; word-break: break-all; }
+.layer .message-note   { font-size: .75rem; color: #666; }
+
 /* Empty / error state */
 #idle {
   position: fixed;

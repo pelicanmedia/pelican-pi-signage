@@ -6,7 +6,11 @@ A self-contained digital signage system for Raspberry Pi. One install script set
 
 ## Features
 
-- **Drag-and-drop playlist** — images, videos, and web URLs
+- **Drag-and-drop playlist** — images, videos, web pages, live streams, YouTube videos and built-in slides
+- **Built-in slides** — clock, weather and text screens, no design work needed
+- **YouTube downloads** — paste a link; the Pi downloads the video so it plays smoothly, even offline
+- **Live streams** — HLS (`.m3u8`) streams play full-screen
+- **Auto-refreshing web pages** — dashboards reload in the background without a flash
 - **Web-based admin UI** — manage content from any device on your network
 - **Auto-advance** — server-side timing keeps the display in sync
 - **Scheduling** — limit any item to a date range, days of the week and a time of day
@@ -74,7 +78,9 @@ sudo /opt/pi-signage/reset-password.sh
 This clears the password (playlist and media are untouched) and the next visit to `/admin` shows the setup page again.
 
 - **Upload Media** — drag and drop images or videos (JPG, PNG, GIF, WebP, MP4, WebM, MOV, MKV, AVI)
-- **Add Web URL** — display any webpage that allows iframe embedding
+- **Add Web URL** — display any webpage that allows iframe embedding, with optional auto-refresh; `.m3u8` addresses play as live streams
+- **Add YouTube Video** — paste a link and the Pi downloads it (see below)
+- **Add Slide** — clock, weather or text screens
 - **Playlist** — reorder items by dragging, toggle enabled/disabled, adjust duration
 - **Background colour** — set the player background for letterboxed content
 - **Schedule** — click the calendar icon on an item (see below)
@@ -92,6 +98,38 @@ Anything else the Pi can't play smoothly is converted automatically after upload
 - **It's slow on a Pi.** Expect anywhere from a little faster than real time to several times longer than the video, depending on the model and the source. For long videos, convert to H.264 MP4 on a computer first.
 - Videos sent from the controller are converted the same way.
 - If a file can't be converted, the item shows **Conversion failed**. Re-export it as H.264 MP4 and upload it again.
+
+---
+
+## More content types
+
+### Web pages and auto-refresh
+
+Any web page that allows embedding can be shown. For dashboards and other pages that change, pick an **Auto-refresh** interval when adding the page, or click the refresh icon on its playlist row. The page reloads in the background while it's on screen and replaces the old copy once loaded, so the screen doesn't flash. If the Pi was offline, a refresh brings the page back when the connection returns.
+
+### Live streams (HLS)
+
+Add a stream's `.m3u8` address with **Add Web URL**. Streams play for the duration you set (they never "finish" like a video), at no higher resolution than the screen. Streams need a working internet connection.
+
+### YouTube videos
+
+Paste a YouTube link into **Add YouTube Video**. The Pi downloads it (up to 1080p, preferring H.264 so no conversion is needed), names it after the video's title, and adds it to the playlist. Other sites supported by [yt-dlp](https://github.com/yt-dlp/yt-dlp) work too.
+
+- The item shows **Downloading…** until it's ready. If it fails, the error is shown with a **Retry** button.
+- The installer adds yt-dlp and [Deno](https://deno.com) (yt-dlp needs Deno for YouTube) to `/opt/pi-signage/bin/`. yt-dlp updates itself daily; re-running the installer updates both.
+- **YouTube needs 64-bit Raspberry Pi OS**, because Deno isn't available for 32-bit.
+- If YouTube blocks downloads from your network, yt-dlp options (for example a cookies file) can be added to `.env` as `YTDLP_EXTRA_ARGS=`.
+- Only download videos you have the right to show.
+
+### Built-in slides
+
+**Add Slide** offers three ready-made screens, each with its own colours and display time:
+
+- **Clock** — time and date, in the Pi's time zone or another one, with an optional label (e.g. "New York").
+- **Weather** — current conditions and a 3-day forecast from [Open-Meteo](https://open-meteo.com) (free, no API key). Search for a place when adding it. The Pi needs internet access; if the connection drops it keeps showing the last forecast, marked "Offline".
+- **Text** — a heading and message, sized automatically to fill the screen.
+
+Use **Preview** in the form to see a slide before adding it. Slides are served by the Pi at `/widgets/clock`, `/widgets/weather` and `/widgets/text`.
 
 ---
 
@@ -180,10 +218,13 @@ journalctl -u pi-signage-kiosk -f
 /opt/pi-signage/
 ├── app.py              # Flask application
 ├── reset-password.sh   # Clears the admin password
-├── .env                # Controller URL/API key, optional GitHub token and Chromium flags (owner-only)
+├── .env                # Controller URL/API key, optional GitHub token, Chromium flags and yt-dlp options (owner-only)
 ├── sync.py             # Controller sync thread
 ├── schedule.py         # Playlist scheduling rules
-├── media.py            # Video checking and background conversion
+├── media.py            # Video checking, conversion and downloads (background worker)
+├── content.py          # Per-item options (auto-refresh etc.)
+├── youtube.py          # YouTube downloads via yt-dlp
+├── bin/                # yt-dlp and Deno
 ├── kiosk.sh            # Chromium kiosk launcher (Wayland/X11)
 ├── VERSION             # Installed version
 ├── install.conf        # Saved install user
@@ -193,11 +234,12 @@ journalctl -u pi-signage-kiosk -f
 │   ├── admin.html      # Admin UI
 │   ├── login.html      # Admin login
 │   ├── setup.html      # First-run password setup
-│   └── account.html    # Change password
+│   ├── account.html    # Change password
+│   └── widgets/        # Built-in slides (clock, weather, text)
 └── static/
     ├── css/
-    ├── js/
-    └── uploads/        # Uploaded media files
+    ├── js/             # incl. vendor/hls.light.min.js for live streams
+    └── uploads/        # Uploaded and downloaded media files
 ```
 
 Uploaded media and the database are **not touched by updates** — only application files are overwritten.

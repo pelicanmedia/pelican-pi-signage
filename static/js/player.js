@@ -10,20 +10,102 @@ let preloaded    = null;   // { id, src, layer } built ahead of time for the nex
 
 const PRELOAD_SECONDS = 8;  // start loading the next item this long before it's due
 
-function makeVideo(src, deferPlay) {
+const VIDEO_URL_RE  = /\.(mp4|webm|mov|m4v)(\?.*)?$/i;
+const STREAM_URL_RE = /\.m3u8(\?.*)?$/i;   // HLS live streams / playlists
+
+function messageBox(title, detail, note) {
+  const box = document.createElement("div");
+  box.className = "message";
+  box.innerHTML = `
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+        d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+    </svg>
+    <div class="message-title"></div>
+    <div class="message-detail"></div>
+    <div class="message-note"></div>`;
+  box.querySelector(".message-title").textContent  = title || "";
+  box.querySelector(".message-detail").textContent = detail || "";
+  box.querySelector(".message-note").textContent   = note || "";
+  return box;
+}
+
+// Stop a layer's video/stream/timers so the Pi frees the decoder and network
+function disposeLayer(layer) {
+  if (!layer) return;
+  if (layer._cleanup) { try { layer._cleanup(); } catch (_) {} }
+  layer.querySelectorAll("video").forEach(v => {
+    v.pause();
+    v.removeAttribute("src");
+    v.load();
+  });
+  layer.remove();
+}
+
+function makeVideo(src, deferPlay, layer, asset) {
   const vid = document.createElement("video");
-  vid.src         = src;
   vid.preload     = "auto";
   vid.autoplay    = !deferPlay;
   vid.muted       = true;   // required for autoplay in Chromium
   vid.playsInline = true;
   vid.controls    = false;
+
+  const isStream = STREAM_URL_RE.test(src);
+  if (isStream && window.Hls && Hls.isSupported()) {
+    // Use the bundled hls.js even where Chromium has native HLS (new and
+    // patchy across builds), so streams behave the same on every Pi
+    // capLevelToPlayerSize: never fetch more pixels than the screen shows
+    const hls = new Hls({ capLevelToPlayerSize: true, backBufferLength: 30 });
+    let recovered = false;
+    hls.on(Hls.Events.ERROR, (_e, data) => {
+      if (!data.fatal) return;
+      if (!recovered && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        recovered = true;
+        hls.recoverMediaError();
+      } else if (!recovered && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        recovered = true;
+        hls.startLoad();
+      } else {
+        hls.destroy();
+        vid.style.display = "none";
+        layer.appendChild(messageBox(asset.name, asset.src, "The live stream could not be played"));
+      }
+    });
+    hls.loadSource(src);
+    hls.attachMedia(vid);
+    layer._cleanup = () => hls.destroy();
+  } else {
+    vid.src = src;
+  }
+
+  // Videos move on when they finish. Live streams never end, so they run
+  // for their set duration (a recorded HLS playlist that ends still advances).
   vid.addEventListener("ended", async () => {
     forceNext = true;
     await fetch("/api/advance", { method: "POST" });
     poll();
   });
   return vid;
+}
+
+// Reload a web page every refresh_seconds while it's on screen. The new copy
+// loads behind the old one and replaces it once loaded, so there's no flash.
+function startAutoRefresh(div, asset, seconds) {
+  const timer = setInterval(() => {
+    const old = div.querySelector("iframe");
+    if (!old) return;
+    const fresh = old.cloneNode(false);
+    fresh.style.cssText = "position:absolute; inset:0; visibility:hidden;";
+    fresh.addEventListener("load", () => {
+      fresh.style.cssText = "";
+      old.remove();
+      div.querySelectorAll(".message").forEach(m => m.remove());  // back online
+    }, { once: true });
+    fresh.src = asset.src;
+    div.appendChild(fresh);
+  }, seconds * 1000);
+  const prev = div._cleanup;
+  div._cleanup = () => { clearInterval(timer); if (prev) prev(); };
 }
 
 // Build a DOM layer for the given asset. With deferPlay, videos load but
@@ -38,12 +120,12 @@ function buildLayer(asset, deferPlay = false) {
     div.appendChild(img);
 
   } else if (asset.type === "video") {
-    div.appendChild(makeVideo(asset.src, deferPlay));
+    div.appendChild(makeVideo(asset.src, deferPlay, div, asset));
 
   } else if (asset.type === "url") {
-    // Treat direct video file URLs as a video element
-    if (/\.(mp4|webm|mov|avi|m3u8)(\?.*)?$/i.test(asset.src)) {
-      div.appendChild(makeVideo(asset.src, deferPlay));
+    // Direct video file and live stream (HLS) URLs play in a video element
+    if (VIDEO_URL_RE.test(asset.src) || STREAM_URL_RE.test(asset.src)) {
+      div.appendChild(makeVideo(asset.src, deferPlay, div, asset));
       return div;
     }
 
@@ -51,25 +133,12 @@ function buildLayer(asset, deferPlay = false) {
     frame.setAttribute("allowfullscreen", "");
     frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups");
 
-    const fallback = document.createElement("div");
-    fallback.style.cssText = `
-      display:none; position:absolute; inset:0; align-items:center;
-      justify-content:center; flex-direction:column; gap:1rem;
-      background:#111; color:#888; font-family:system-ui,sans-serif; text-align:center; padding:2rem;
-    `;
-
+    let fallback = null;
     const showFallback = (message) => {
       frame.style.display = "none";
-      fallback.style.display = "flex";
-      fallback.innerHTML = `
-        <svg style="width:48px;height:48px;opacity:.4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-            d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
-        </svg>
-        <div style="font-size:1rem;font-weight:600;color:#aaa">${asset.name}</div>
-        <div style="font-size:.8rem">${asset.src}</div>
-        <div style="font-size:.75rem;color:#666">${message}</div>
-      `;
+      if (fallback) fallback.remove();
+      fallback = messageBox(asset.name, asset.src, message);
+      div.appendChild(fallback);
     };
 
     frame.addEventListener("error", () => showFallback("This site blocks iframe embedding (X-Frame-Options)"));
@@ -91,10 +160,22 @@ function buildLayer(asset, deferPlay = false) {
       });
 
     div.appendChild(frame);
-    div.appendChild(fallback);
+
+    const refresh = asset.options && asset.options.refresh_seconds;
+    if (refresh) startAutoRefresh(div, asset, refresh);
   }
 
   return div;
+}
+
+// Fade a layer out, then dispose of it (with a fallback in case the
+// transition never fires, e.g. while the page is hidden)
+function fadeOut(layer) {
+  let done = false;
+  const finish = () => { if (!done) { done = true; disposeLayer(layer); } };
+  layer.classList.remove("visible");
+  layer.addEventListener("transitionend", finish, { once: true });
+  setTimeout(finish, 1500);
 }
 
 // Cross-fade to a new asset
@@ -107,6 +188,7 @@ function showAsset(asset) {
     const vid = next.querySelector("video");
     if (vid) { vid.currentTime = 0; vid.play().catch(() => {}); }
   } else {
+    if (preloaded) disposeLayer(preloaded.layer);  // wasn't needed after all
     next = buildLayer(asset);
   }
   preloaded = null;
@@ -116,10 +198,7 @@ function showAsset(asset) {
   void next.offsetWidth;
   next.classList.add("visible");
 
-  if (prev) {
-    prev.classList.remove("visible");
-    prev.addEventListener("transitionend", () => prev.remove(), { once: true });
-  }
+  if (prev) fadeOut(prev);
 
   currentLayer = next;
   currentId    = asset.id;
@@ -133,7 +212,9 @@ function maybePreload(asset) {
   if (!up || up.id === asset.id || asset.remaining > PRELOAD_SECONDS) return;
   if (preloaded && preloaded.id === up.id && preloaded.src === up.src) return;
 
-  const isVideoUrl = up.type === "url" && /\.(mp4|webm|mov)(\?.*)?$/i.test(up.src);
+  // Live streams aren't preloaded: they'd start buffering a moving target
+  const isVideoUrl = up.type === "url" && VIDEO_URL_RE.test(up.src);
+  if (preloaded) { disposeLayer(preloaded.layer); preloaded = null; }
   if (up.type === "video" || isVideoUrl) {
     preloaded = { id: up.id, src: up.src, layer: buildLayer(up, true) };
   } else if (up.type === "image") {
@@ -166,8 +247,7 @@ async function poll() {
     if (currentLayer) {
       const dying = currentLayer;
       currentLayer = null;
-      dying.classList.remove("visible");
-      dying.addEventListener("transitionend", () => dying.remove(), { once: true });
+      fadeOut(dying);
     }
     currentId = null;
     idleMsg.textContent = (asset && asset.idle_message) || "No content enabled in playlist.";
