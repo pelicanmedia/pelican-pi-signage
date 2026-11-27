@@ -1,6 +1,7 @@
 import os
 import time
 import datetime
+import threading
 import json
 import sqlite3
 import secrets
@@ -12,6 +13,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 from schedule import SCHEDULE_FIELDS, ScheduleError, is_active, normalize_schedule
 from content import OptionsError, dump_options, normalize_options, parse_options
+import device
 import media
 import youtube
 
@@ -165,6 +167,9 @@ def init_db():
 
     # Restart any video conversions interrupted by a restart
     media.resume_pending()
+
+    # Screen on/off schedule
+    device.start_display_thread()
 
     # Start sync thread if configured
     from sync import maybe_start_sync_thread
@@ -575,18 +580,71 @@ def api_get_settings():
 @login_required
 def api_save_settings():
     data = request.get_json(force=True) or {}
-    allowed_keys = {"bg_color"}
+    updates = {}
+    if "bg_color" in data:
+        updates["bg_color"] = str(data["bg_color"])
+    if any(k in data for k in device.DISPLAY_KEYS):
+        with get_db() as conn:
+            current = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM settings")}
+        try:
+            updates.update(device.normalize_display_settings(data, current))
+        except ScheduleError as e:
+            return jsonify({"error": str(e)}), 400
+
     with get_db() as conn:
-        for key, value in data.items():
-            if key in allowed_keys:
-                conn.execute(
-                    "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
-                    " ON CONFLICT(key) DO UPDATE SET value=excluded.value,"
-                    " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
-                    (key, str(value)),
-                )
+        for key, value in updates.items():
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value,"
+                " updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+                (key, str(value)),
+            )
         conn.commit()
+
+    if any(k in updates for k in device.DISPLAY_KEYS):
+        # Apply the new screen schedule straight away
+        threading.Thread(target=device.check_screen, daemon=True).start()
     return jsonify({"success": True})
+
+
+# ---------------------------------------------------------------------------
+# API – device (health, reboot, now showing)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/system")
+@login_required
+def api_system():
+    return jsonify(device.system_info())
+
+
+@app.route("/api/system/<action>", methods=["POST"])
+@login_required
+def api_system_action(action):
+    if action not in device.ACTIONS:
+        return jsonify({"error": "Unknown action"}), 404
+    error = device.run_action(action)
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify({"success": True})
+
+
+@app.route("/api/now")
+@login_required
+def api_now():
+    """What's on screen right now, for the admin page."""
+    if device.screen_is_off():
+        return jsonify({"screen_off": True})
+    assets = _active_assets()
+    current = next((a for a in assets if a["id"] == _state["current_id"]), None)
+    if not current:
+        return jsonify({"screen_off": False, "current": None})
+    remaining = max(0, current["duration"] - (time.time() - _state["started_at"]))
+    return jsonify({
+        "screen_off": False,
+        "current": {"id": current["id"], "name": current["name"], "type": current["type"],
+                    "duration": current["duration"], "remaining": round(remaining)},
+        "count": len(assets),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -672,10 +730,20 @@ def _next_after(assets, key):
     return assets[0]
 
 
+def _prev_before(assets, key):
+    """Last asset ordered before `key`, wrapping round to the end."""
+    if key is not None:
+        for a in reversed(assets):
+            if _sort_key(a) < tuple(key):
+                return a
+    return assets[-1]
+
+
 def _set_current(asset, now):
     _state["current_id"] = asset["id"] if asset else None
     _state["sort_key"]   = _sort_key(asset) if asset else None
     _state["started_at"] = now
+    device.set_now_showing(asset)
 
 
 @app.route("/api/advance", methods=["POST"])
@@ -692,14 +760,30 @@ def api_advance():
     return jsonify({"success": True})
 
 
+@app.route("/api/previous", methods=["POST"])
+def api_previous():
+    """Go back to the previous item (admin "skip back")."""
+    if not (_is_local_request() or session.get("logged_in")):
+        return jsonify({"error": "Login required"}), 401
+    assets = _active_assets()
+    if assets:
+        _set_current(_prev_before(assets, _state["sort_key"]), time.time())
+    return jsonify({"success": True})
+
+
 @app.route("/api/next")
 def api_next():
-    assets = _active_assets()
     with get_db() as conn:
         bg_row = conn.execute(
             "SELECT value FROM settings WHERE key='bg_color'"
         ).fetchone()
     bg_color = bg_row["value"] if bg_row else "#000000"
+
+    if device.screen_is_off():
+        # Outside the screen's on-hours: the player goes black and stops media
+        return jsonify({"bg_color": bg_color, "screen_off": True})
+
+    assets = _active_assets()
 
     if not assets:
         with get_db() as conn:

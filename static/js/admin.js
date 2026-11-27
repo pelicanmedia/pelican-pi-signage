@@ -460,7 +460,76 @@ document.querySelectorAll(".slide-btn").forEach(btn => {
 async function loadSettings() {
   const s = await fetch("/api/settings").then(r => r.json());
   if (s.bg_color) $("bgColor").value = s.bg_color;
+  renderScreenSchedule($("screenSchedule"), s, async fields => {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || "Save failed");
+    toast("Screen schedule saved");
+    setTimeout(loadHealth, 4000);  // show the new screen state once applied
+  });
 }
+
+// -------------------------------------------------------------------------
+// Now showing / skip
+// -------------------------------------------------------------------------
+let nowTimer = null;
+async function loadNow() {
+  clearTimeout(nowTimer);
+  try {
+    const n = await fetch("/api/now").then(r => r.json());
+    if (n.screen_off) {
+      $("nowName").textContent = "Screen is off (screen schedule)";
+      $("nowRemaining").textContent = "";
+    } else if (n.current) {
+      $("nowName").textContent = n.current.name;
+      $("nowRemaining").textContent = `${n.current.remaining}s left`;
+    } else {
+      $("nowName").textContent = "Nothing playing";
+      $("nowRemaining").textContent = "";
+    }
+  } catch (_) {}
+  nowTimer = setTimeout(loadNow, 3000);
+}
+
+async function skip(direction) {
+  await fetch(direction === "back" ? "/api/previous" : "/api/advance", { method: "POST" });
+  await loadNow();
+}
+$("prevBtn").addEventListener("click", () => skip("back"));
+$("nextBtn").addEventListener("click", () => skip("next"));
+
+// -------------------------------------------------------------------------
+// Device health and actions
+// -------------------------------------------------------------------------
+async function loadHealth() {
+  try {
+    renderHealth($("health"), await fetch("/api/system").then(r => r.json()));
+  } catch (_) {
+    $("health").innerHTML = `<p class="text-sm text-red-600">Couldn't load device information.</p>`;
+  }
+}
+$("refreshHealth").addEventListener("click", loadHealth);
+
+const ACTION_CONFIRM = {
+  "restart-kiosk": "Restart the display? The screen goes blank for a few seconds.",
+  "reboot":        "Reboot the Pi? The screen and this page are unavailable for about a minute.",
+  "shutdown":      "Shut down the Pi?\n\nIt will NOT come back on by itself — someone has to unplug and replug the power.",
+};
+document.querySelectorAll(".device-action").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const action = btn.dataset.action;
+    if (!confirm(ACTION_CONFIRM[action])) return;
+    const res = await fetch(`/api/system/${action}`, { method: "POST" });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(body.error || "Failed", true); return; }
+    toast(action === "restart-kiosk" ? "Restarting the display…"
+        : action === "reboot" ? "Rebooting — back in about a minute" : "Shutting down");
+  });
+});
 
 $("saveBgColor").addEventListener("click", async () => {
   const color = $("bgColor").value;
@@ -489,3 +558,6 @@ async function checkVersion() {
 loadPlaylist();
 loadSettings();
 checkVersion();
+loadNow();
+loadHealth();
+setInterval(loadHealth, 60000);

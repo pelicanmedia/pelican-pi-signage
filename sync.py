@@ -121,11 +121,18 @@ def build_sync_request():
     except FileNotFoundError:
         version = "unknown"
 
+    try:
+        import device
+        system = device.system_info()
+    except Exception:
+        system = None
+
     return {
         "client_version":       version,
         "assets":               asset_list,
         "settings":             settings_dict,
         "deleted_asset_uuids":  [],  # populated below
+        "system":               system,
     }
 
 
@@ -329,6 +336,59 @@ def _prepare_if_video(sync_uuid, filepath):
         media.prepare_video(row["id"], filepath)
 
 
+def _run_commands(controller_url, api_key, commands):
+    """
+    Carry out commands from the controller (reboot, restart-kiosk).
+
+    Each command is acknowledged *before* it runs, and only run if the
+    controller accepted the acknowledgement, so a reboot can't repeat in a
+    loop. Command ids already done are remembered as a second safeguard.
+    """
+    import device
+    with _get_db() as conn:
+        row = conn.execute("SELECT value FROM sync_config WHERE key='done_command_ids'").fetchone()
+    try:
+        done = json.loads(row["value"]) if row else []
+    except ValueError:
+        done = []
+
+    valid = [c for c in commands
+             if isinstance(c, dict) and isinstance(c.get("id"), int)
+             and c.get("command") in device.REMOTE_ACTIONS]
+    todo = [c for c in valid if c["id"] not in done]
+    # Already done but sent again: the earlier acknowledgement was lost, so
+    # acknowledge again (without running it twice)
+    repeat_ids = [c["id"] for c in valid if c["id"] in done]
+    if not valid:
+        return
+
+    ids = [c["id"] for c in todo]
+    req = urllib.request.Request(
+        f"{controller_url}/api/sync/ack",
+        data=json.dumps({"downloaded": [], "commands": ids + repeat_ids}).encode(),
+        headers={"Content-Type": "application/json", "X-Api-Key": api_key},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                return
+    except Exception:
+        return  # not acknowledged: the controller will send it again
+    if not todo:
+        return
+
+    with _get_db() as conn:
+        _write_sync_config(conn, "done_command_ids", json.dumps((done + ids)[-50:]))
+        conn.commit()
+
+    # Restart the display before a reboot makes it pointless
+    for c in sorted(todo, key=lambda c: c["command"] == "reboot"):
+        error = device.run_action(c["command"], delay=3)
+        if error:
+            _record_error(f"Remote {c['command']} failed: {error}")
+
+
 def _send_ack(controller_url, api_key, tokens):
     if not tokens:
         return
@@ -397,6 +457,10 @@ def _do_sync(cfg):
         _write_sync_config(conn, "last_sync_at", now)
         _write_sync_config(conn, "last_sync_error", "")
         conn.commit()
+
+    # Remote commands last, so everything above is saved before a reboot
+    if response.get("commands"):
+        _run_commands(controller_url, api_key, response["commands"])
 
     return True  # keep running
 

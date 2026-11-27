@@ -219,6 +219,27 @@
       </div>
     </section>
 
+    <!-- Now showing -->
+    <section class="bg-white rounded-xl shadow px-6 py-4 flex items-center gap-4 flex-wrap">
+      <div class="flex-1 min-w-0">
+        <div class="text-xs uppercase tracking-wider text-gray-400">Now showing</div>
+        <div id="nowName" class="font-medium text-gray-800 truncate">—</div>
+      </div>
+      <div id="nowRemaining" class="text-sm text-gray-500 tabular-nums"></div>
+      <div class="flex gap-2">
+        <button id="prevBtn" class="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                title="Previous item">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7M19 19l-7-7 7-7"/></svg>
+          Back
+        </button>
+        <button id="nextBtn" class="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                title="Next item">
+          Skip
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+    </section>
+
     <!-- Playlist -->
     <section class="bg-white rounded-xl shadow">
       <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -248,6 +269,28 @@
         </table>
       </div>
     </section>
+
+    <!-- Device -->
+    <section class="grid lg:grid-cols-2 gap-6">
+      <div class="bg-white rounded-xl shadow p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold text-gray-800">Device</h2>
+          <button id="refreshHealth" class="text-xs text-indigo-600 hover:underline">Refresh</button>
+        </div>
+        <div id="health"><p class="text-sm text-gray-400">Loading…</p></div>
+        <div class="flex flex-wrap gap-2 mt-5 pt-4 border-t border-gray-100">
+          <button data-action="restart-kiosk" class="device-action text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  title="Restart the Chromium display (fixes most display glitches)">Restart display</button>
+          <button data-action="reboot" class="device-action text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50">Reboot</button>
+          <button data-action="shutdown" class="device-action text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-50"
+                  title="Needs someone to unplug and replug the power to turn it back on">Shut down</button>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow p-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">Screen schedule</h2>
+        <div id="screenSchedule"></div>
+      </div>
+    </section>
   </main>
 
   <!-- Toast -->
@@ -257,6 +300,7 @@
   <script>window.SLIDE_PREVIEW = true;</script>
   <script src="/static/js/schedule-ui.js"></script>
   <script src="/static/js/content-ui.js"></script>
+  <script src="/static/js/device-ui.js"></script>
   <script src="/static/js/admin.js"></script>
   <script>
     /* Sync badge logic */

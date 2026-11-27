@@ -49,6 +49,12 @@ apt-get install -y \
     ffmpeg \
     unzip
 
+# Screen on/off schedule: wlr-randr (Wayland) and cec-ctl (HDMI-CEC, in
+# v4l-utils). Optional — install separately so a missing package can't stop
+# the install.
+apt-get install -y wlr-randr v4l-utils \
+    || echo "    WARNING: couldn't install wlr-randr/v4l-utils — the screen schedule may not switch the screen off"
+
 # ---------------------------------------------------------------------------
 # Create directory structure
 # ---------------------------------------------------------------------------
@@ -70,7 +76,9 @@ dl schedule.py
 dl content.py
 dl youtube.py
 dl media.py
+dl device.py
 dl kiosk.sh
+dl display.sh
 dl VERSION
 dl templates/index.html
 dl templates/admin.html
@@ -87,6 +95,7 @@ dl static/js/admin.js
 dl static/js/player.js
 dl static/js/schedule-ui.js
 dl static/js/content-ui.js
+dl static/js/device-ui.js
 dl static/js/vendor/hls.light.min.js
 dl static/js/vendor/hls.js-LICENSE.txt
 
@@ -159,6 +168,24 @@ chmod -R 755 "$APP_DIR"
 # .env holds API keys/tokens and the DB holds the password hash — owner-only
 chmod 600 "$APP_DIR/.env"
 [ -f "$APP_DIR/signage.db" ] && chmod 600 "$APP_DIR/signage.db"
+
+# ---------------------------------------------------------------------------
+# Device controls: let the media server reboot, shut down and restart the
+# kiosk — and nothing else — without a password
+# ---------------------------------------------------------------------------
+echo "==> Allowing reboot / shut down / restart display from the admin page…"
+SUDOERS_FILE="/etc/sudoers.d/pi-signage"
+SUDOERS_TMP="$(mktemp)"
+cat > "$SUDOERS_TMP" << EOF
+# Pelican Pi Signage — device controls in the admin page and from the controller
+$INSTALL_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl restart $SERVICE_KIOSK
+EOF
+if visudo -cf "$SUDOERS_TMP" >/dev/null; then
+    install -m 440 -o root -g root "$SUDOERS_TMP" "$SUDOERS_FILE"
+else
+    echo "    WARNING: sudoers rule failed validation — device controls won't work"
+fi
+rm -f "$SUDOERS_TMP"
 
 # ---------------------------------------------------------------------------
 # Display: stop the screen blanking (Wayland and X11)

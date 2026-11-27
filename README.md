@@ -18,6 +18,8 @@ A self-contained digital signage system for Raspberry Pi. One install script set
 - **Automatic video conversion** — videos the Pi can't play smoothly (AVI, MKV, HEVC, 10-bit, 4K…) are converted to H.264 1080p after upload
 - **Gapless playback** — the next video or image is preloaded a few seconds before it's due
 - **Wayland and X11** — the kiosk works with Raspberry Pi OS's Wayland desktop (Pi 4/5) and X11
+- **Device controls** — health (temperature, power, disk, memory), reboot / shut down / restart display, now showing with skip back and forward
+- **Screen schedule** — turn the screen (and optionally the TV, via HDMI-CEC) off outside opening hours
 - **Background colour** — customisable per-playlist
 - **Version badge** — admin UI shows current version and alerts when an update is available
 - **Password-protected admin** — the admin UI and its API require a login; the player page stays open for the kiosk
@@ -133,6 +135,24 @@ Use **Preview** in the form to see a slide before adding it. Slides are served b
 
 ---
 
+## Device controls
+
+The **Now showing** bar above the playlist shows what's on screen, with **Back** and **Skip** buttons.
+
+The **Device** section shows the Pi's health: temperature, uptime, memory, disk space, IP addresses, whether the display is running, and whether the screen is on. Warnings appear for overheating, under-voltage (a weak power supply, a common cause of Pi problems), throttling, a nearly full disk, or the display not running. The controller shows the same information for each Pi.
+
+- **Restart display** restarts Chromium, which fixes most display glitches.
+- **Reboot** restarts the Pi (about a minute).
+- **Shut down** turns the Pi off. It won't come back on until someone unplugs and replugs the power, so it's only on the Pi's own admin page, not the controller.
+
+The installer adds `/etc/sudoers.d/pi-signage`, which lets the media server run exactly these three commands (`systemctl reboot`, `systemctl poweroff`, `systemctl restart pi-signage-kiosk.service`) and nothing else.
+
+### Screen schedule
+
+Set **On at** and **Off at** times and the days the screen should be on (it stays off all day on the others). Outside those hours the player goes black and stops playing, and the screen's output is switched off (Wayland via `wlr-randr`, X11 via DPMS). Tick **HDMI-CEC** to also put the TV into standby and wake it again; many TVs then switch fully off instead of showing "no signal", but not every TV supports it. An off time earlier than the on time runs past midnight. The schedule uses the Pi's time zone and can also be set from the controller.
+
+---
+
 ## Kiosk display
 
 The kiosk starts Chromium full-screen on the player page after the desktop logs in. It detects whether the desktop is **Wayland** (default on Pi 4/5 with Bookworm) or **X11**, and the installer turns off screen blanking.
@@ -226,6 +246,8 @@ journalctl -u pi-signage-kiosk -f
 ├── youtube.py          # YouTube downloads via yt-dlp
 ├── bin/                # yt-dlp and Deno
 ├── kiosk.sh            # Chromium kiosk launcher (Wayland/X11)
+├── device.py           # Health info, reboot/shutdown, screen schedule
+├── display.sh          # Turns the screen on/off (wlr-randr, DPMS, HDMI-CEC)
 ├── VERSION             # Installed version
 ├── install.conf        # Saved install user
 ├── signage.db          # SQLite database (playlist, settings, sync config, admin password hash)

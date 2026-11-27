@@ -242,6 +242,19 @@ async function poll() {
     stage.style.background = asset.bg_color;
   }
 
+  if (asset && asset.screen_off) {
+    // Screen is scheduled off: stop everything and show plain black (the
+    // server also turns the output / TV off where it can)
+    if (preloaded) { disposeLayer(preloaded.layer); preloaded = null; }
+    if (currentLayer) { disposeLayer(currentLayer); currentLayer = null; }
+    currentId = null;
+    idle.style.display = "none";
+    document.body.style.background = "#000";
+    stage.style.background = "#000";
+    pollTimer = setTimeout(poll, 5000);
+    return;
+  }
+
   if (!asset || !asset.type) {
     // No enabled assets
     if (currentLayer) {
@@ -263,9 +276,9 @@ async function poll() {
 
   maybePreload(asset);
 
-  // Schedule next poll slightly before the server will advance (min 1 s, max 5 s so
-  // disabled assets are detected quickly even during long videos)
-  const delay = Math.min(5000, Math.max(1000, (asset.remaining - 0.3) * 1000));
+  // Schedule next poll slightly before the server will advance (min 1 s, max 2 s so
+  // skips from the admin page and disabled items show up quickly)
+  const delay = Math.min(2000, Math.max(1000, (asset.remaining - 0.3) * 1000));
   pollTimer = setTimeout(poll, delay);
 }
 
