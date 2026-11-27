@@ -157,7 +157,7 @@ Set **On at** and **Off at** times and the days the screen should be on (it stay
 
 The kiosk starts Chromium full-screen on the player page after the desktop logs in. It detects whether the desktop is **Wayland** (default on Pi 4/5 with Bookworm) or **X11**, and the installer turns off screen blanking.
 
-The mouse pointer is hidden on the player page itself, so it works on both Wayland and X11. The page doesn't respond to clicks or touches; it's meant for signage, not interactive screens.
+The mouse pointer is hidden. On Wayland the installer gives the desktop (labwc or wayfire) an invisible pointer theme, `pi-signage-blank`, which takes effect after a reboot. This also hides the pointer in the desktop itself. To get it back, remove the `XCURSOR_THEME=` line from `~/.config/labwc/environment` (or the `cursor_theme` line from `~/.config/wayfire.ini`) and reboot. On X11, `unclutter` hides it. The player page also hides it and doesn't respond to clicks or touches, because it's meant for signage, not interactive screens.
 
 To pass extra flags to Chromium, for example while tuning a particular display, add them to `/opt/pi-signage/.env`, then restart the kiosk with `sudo systemctl restart pi-signage-kiosk`:
 

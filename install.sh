@@ -199,6 +199,85 @@ if command -v raspi-config >/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
+# Display: hide the mouse pointer on Wayland
+# The player page hides the pointer over Chromium, but only after the pointer
+# has moved into its window. Until then labwc/wayfire draw their own arrow,
+# which stays on screen when nobody touches the mouse. So the compositor gets
+# an invisible cursor theme. X11 uses unclutter instead (see kiosk.sh).
+# Takes effect after the next reboot.
+# ---------------------------------------------------------------------------
+echo "==> Hiding the mouse pointer…"
+CURSOR_THEME="pi-signage-blank"
+CURSOR_DIR="/usr/share/icons/$CURSOR_THEME"
+USER_HOME="$(getent passwd "$INSTALL_USER" | cut -d: -f6)"
+
+mkdir -p "$CURSOR_DIR/cursors"
+printf '[Icon Theme]\nName=%s\nComment=Invisible mouse pointer (Pelican Pi Signage)\n' \
+    "$CURSOR_THEME" > "$CURSOR_DIR/index.theme"
+
+# One fully transparent 1x1 pointer in Xcursor format, then every common
+# pointer name linked to it
+python3 - "$CURSOR_DIR/cursors/left_ptr" << 'PYEOF'
+import struct, sys
+IMAGE, SIZE = 0xFFFD0002, 24
+header = struct.pack("<4sIII", b"Xcur", 16, 0x10000, 1)
+toc = struct.pack("<III", IMAGE, SIZE, 16 + 12)
+# chunk header size, type, nominal size, version, w, h, xhot, yhot, delay, pixel
+image = struct.pack("<IIIIIIIIII", 36, IMAGE, SIZE, 1, 1, 1, 0, 0, 0, 0)
+with open(sys.argv[1], "wb") as f:
+    f.write(header + toc + image)
+PYEOF
+for name in default arrow top_left_arrow pointer hand1 hand2 text xterm \
+            wait watch progress left_ptr_watch crosshair cross move grab \
+            grabbing not-allowed help question_arrow all-scroll; do
+    ln -sf left_ptr "$CURSOR_DIR/cursors/$name"
+done
+chmod -R a+rX "$CURSOR_DIR"
+
+# labwc (Raspberry Pi OS default): XCURSOR_THEME in its environment file.
+# Start from the system file so its settings (e.g. keyboard layout) are kept.
+LABWC_DIR="$USER_HOME/.config/labwc"
+LABWC_ENV="$LABWC_DIR/environment"
+mkdir -p "$LABWC_DIR"
+if [ ! -f "$LABWC_ENV" ] && [ -f /etc/xdg/labwc/environment ]; then
+    cp /etc/xdg/labwc/environment "$LABWC_ENV"
+fi
+touch "$LABWC_ENV"
+sed -i '/^XCURSOR_THEME=/d' "$LABWC_ENV"
+echo "XCURSOR_THEME=$CURSOR_THEME" >> "$LABWC_ENV"
+chown "$INSTALL_USER:$INSTALL_USER" "$USER_HOME/.config"
+chown -R "$INSTALL_USER:$INSTALL_USER" "$LABWC_DIR"
+
+# wayfire (older Bookworm installs): cursor_theme in the [input] section
+WAYFIRE_INI="$USER_HOME/.config/wayfire.ini"
+if [ -f "$WAYFIRE_INI" ]; then
+    python3 - "$WAYFIRE_INI" "$CURSOR_THEME" << 'PYEOF'
+import re, sys
+path, theme = sys.argv[1], sys.argv[2]
+lines = open(path).read().splitlines()
+out, in_input, done = [], False, False
+for line in lines:
+    section = re.match(r"\s*\[(.+)\]\s*$", line)
+    if section:
+        if in_input and not done:
+            out.append(f"cursor_theme = {theme}")
+            done = True
+        in_input = section.group(1).strip() == "input"
+    elif in_input and re.match(r"\s*cursor_theme\s*=", line):
+        if not done:
+            out.append(f"cursor_theme = {theme}")
+            done = True
+        continue
+    out.append(line)
+if not done:
+    if not in_input:
+        out += ["", "[input]"]
+    out.append(f"cursor_theme = {theme}")
+open(path, "w").write("\n".join(out) + "\n")
+PYEOF
+fi
+
+# ---------------------------------------------------------------------------
 # Install systemd services
 # ---------------------------------------------------------------------------
 echo "==> Installing systemd services…"
@@ -243,7 +322,8 @@ echo "              Playlist schedules use this. If it's wrong, fix it with:"
 echo "              sudo raspi-config  (Localisation Options > Timezone)"
 echo ""
 echo " The Chromium kiosk will launch automatically on"
-echo " next graphical login / reboot."
+echo " next graphical login / reboot. Reboot once after"
+echo " installing or updating so the mouse pointer is hidden."
 echo ""
 echo " To start kiosk now (from the desktop session):"
 echo "   sudo systemctl start pi-signage-kiosk.service"
